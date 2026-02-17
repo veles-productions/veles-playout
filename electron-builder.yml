@@ -4,17 +4,33 @@ directories:
   output: release
   buildResources: assets
 files:
-  - dist/**/*
+  - out/**/*
   - "!node_modules/macadam/build/**/*"
   - "!node_modules/grandiose/build/**/*"
+
 win:
-  target: nsis
+  target:
+    - nsis
+    - portable
   icon: assets/icons/icon.ico
+  forceCodeSigning: false
+  verifyUpdateCodeSignature: false
+
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: true
   createDesktopShortcut: true
+  artifactName: ${productName}-${version}-Setup.${ext}
+
+portable:
+  artifactName: ${productName}-${version}-Portable.${ext}
+
+publish:
+  provider: github
+  owner: veles-productions
+  repo: veles-playout
+
 extraResources:
   - from: assets/
     to: assets/

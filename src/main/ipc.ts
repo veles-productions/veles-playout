@@ -20,6 +20,15 @@ export const IPC_CHANNELS = {
   GET_SDI_DEVICES: 'playout:getSdiDevices',
   SET_OUTPUT: 'playout:setOutput',
   GET_VERSION: 'playout:getVersion',
+  LOAD_TEST_SIGNAL: 'playout:loadTestSignal',
+  GET_HARDWARE: 'playout:getHardware',
+
+  // Transport controls
+  TAKE: 'playout:take',
+  CLEAR: 'playout:clear',
+  PLAY: 'playout:play',
+  STOP: 'playout:stop',
+  FREEZE: 'playout:freeze',
 
   // Output window frames
   OUTPUT_FRAME: 'output:frame',

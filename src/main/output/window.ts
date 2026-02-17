@@ -45,8 +45,11 @@ export class WindowOutput implements OutputDriver {
       },
     });
 
-    const rgbHtml = path.join(__dirname, '../../renderer/output/rgb.html');
-    this.rgbWindow.loadFile(rgbHtml);
+    if (process.env.ELECTRON_RENDERER_URL) {
+      this.rgbWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/output/rgb.html`);
+    } else {
+      this.rgbWindow.loadFile(path.join(__dirname, '../../renderer/output/rgb.html'));
+    }
 
     this.rgbWindow.webContents.on('did-finish-load', () => {
       this.rgbReady = true;
@@ -86,8 +89,11 @@ export class WindowOutput implements OutputDriver {
       },
     });
 
-    const alphaHtml = path.join(__dirname, '../../renderer/output/alpha.html');
-    this.alphaWindow.loadFile(alphaHtml);
+    if (process.env.ELECTRON_RENDERER_URL) {
+      this.alphaWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/output/alpha.html`);
+    } else {
+      this.alphaWindow.loadFile(path.join(__dirname, '../../renderer/output/alpha.html'));
+    }
 
     this.alphaWindow.webContents.on('did-finish-load', () => {
       this.alphaReady = true;

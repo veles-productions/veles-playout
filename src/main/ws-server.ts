@@ -10,9 +10,14 @@
 
 import { WebSocketServer as WsServer, WebSocket } from 'ws';
 import { v4 as uuid } from 'uuid';
+import { EventEmitter } from 'events';
+import { app } from 'electron';
 import { PlayoutEngine, type EngineSnapshot, type TemplatePayload } from './engine';
 import { buildTemplateDoc } from './template/builder';
 import { buildOGrafHostDoc, isOGrafTemplate as isOGraf } from './template/ograf';
+import { generateTestSignal, type TestPattern } from './template/test-signals';
+import { getConfig } from './config';
+import { detectHardware } from './hardware';
 import type { CaptureStats } from './capture';
 
 // ── Protocol Types ──
@@ -28,12 +33,14 @@ interface WsCommand {
     | 'clear'
     | 'freeze'
     | 'setOutput'
-    | 'status';
+    | 'status'
+    | 'testSignal'
+    | 'getInfo';
   payload?: Record<string, unknown>;
 }
 
 interface WsEvent {
-  type: 'state' | 'frameUpdate' | 'error' | 'ack';
+  type: 'state' | 'frameUpdate' | 'error' | 'ack' | 'info';
   id?: string;
   payload: unknown;
 }
@@ -45,13 +52,14 @@ interface ClientInfo {
   remoteAddress?: string;
 }
 
-export class WebSocketServer {
+export class WebSocketServer extends EventEmitter {
   private wss: WsServer | null = null;
   private clients = new Map<string, ClientInfo>();
   private engine: PlayoutEngine;
   private port: number;
 
   constructor(engine: PlayoutEngine, port: number = 9900) {
+    super();
     this.engine = engine;
     this.port = port;
   }
@@ -70,6 +78,12 @@ export class WebSocketServer {
       };
       this.clients.set(clientId, clientInfo);
       console.log(`[WS] Client connected: ${clientId} from ${clientInfo.remoteAddress}`);
+      this.emit('clientChange', {
+        clientId,
+        event: 'connected',
+        remoteAddress: clientInfo.remoteAddress,
+        totalClients: this.clients.size,
+      });
 
       // Send current state on connect
       this.send(ws, {
@@ -92,6 +106,11 @@ export class WebSocketServer {
       ws.on('close', () => {
         this.clients.delete(clientId);
         console.log(`[WS] Client disconnected: ${clientId}`);
+        this.emit('clientChange', {
+          clientId,
+          event: 'disconnected',
+          totalClients: this.clients.size,
+        });
       });
 
       ws.on('error', (err) => {
@@ -220,6 +239,38 @@ export class WebSocketServer {
           // This is a pass-through for remote configuration
           console.log('[WS] setOutput:', command.payload);
           break;
+        }
+
+        case 'testSignal': {
+          const tp = command.payload as Record<string, unknown> | undefined;
+          const pattern = (tp?.pattern as TestPattern) || 'smpte';
+          const alpha = (tp?.alpha as boolean) || false;
+          const html = generateTestSignal(pattern, alpha);
+          const testPayload: TemplatePayload = {
+            templateHtml: html,
+            templateCss: '',
+            variables: {},
+            templateId: `test-signal:${pattern}`,
+          };
+          await this.engine.load(testPayload);
+          break;
+        }
+
+        case 'getInfo': {
+          const cfg = getConfig();
+          const hw = detectHardware();
+          this.send(client.ws, {
+            type: 'info',
+            payload: {
+              version: app.getVersion(),
+              resolution: cfg.resolution,
+              frameRate: cfg.frameRate,
+              sdi: hw.sdi,
+              ndi: hw.ndi,
+              displays: hw.displays,
+            },
+          });
+          return; // Don't send ack for info requests
         }
 
         case 'status':

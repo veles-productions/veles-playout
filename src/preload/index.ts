@@ -28,6 +28,20 @@ export interface PlayoutAPI {
   setOutput(config: unknown): Promise<void>;
   /** Get app version */
   getVersion(): Promise<string>;
+  /** Load a built-in test signal pattern */
+  loadTestSignal(pattern: string, alpha?: boolean): Promise<void>;
+  /** Get hardware info (SDI/NDI/displays) */
+  getHardware(): Promise<unknown>;
+  /** Transport: send PVW to PGM (go on-air) */
+  take(): Promise<void>;
+  /** Transport: clear PGM (off-air) */
+  clear(): Promise<void>;
+  /** Transport: play/resume PGM animation */
+  play(): Promise<void>;
+  /** Transport: stop/pause PGM animation */
+  stop(): Promise<void>;
+  /** Transport: freeze PGM output */
+  freeze(): Promise<void>;
 }
 
 contextBridge.exposeInMainWorld('playoutAPI', {
@@ -39,6 +53,14 @@ contextBridge.exposeInMainWorld('playoutAPI', {
   getSdiDevices: () => ipcRenderer.invoke('playout:getSdiDevices'),
   setOutput: (config: unknown) => ipcRenderer.invoke('playout:setOutput', config),
   getVersion: () => ipcRenderer.invoke('playout:getVersion'),
+  loadTestSignal: (pattern: string, alpha?: boolean) =>
+    ipcRenderer.invoke('playout:loadTestSignal', pattern, alpha),
+  getHardware: () => ipcRenderer.invoke('playout:getHardware'),
+  take: () => ipcRenderer.invoke('playout:take'),
+  clear: () => ipcRenderer.invoke('playout:clear'),
+  play: () => ipcRenderer.invoke('playout:play'),
+  stop: () => ipcRenderer.invoke('playout:stop'),
+  freeze: () => ipcRenderer.invoke('playout:freeze'),
 
   onStateChange: (callback: (state: unknown) => void) => {
     const handler = (_event: unknown, state: unknown) => callback(state);

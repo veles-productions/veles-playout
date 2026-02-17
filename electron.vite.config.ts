@@ -3,7 +3,11 @@ import { resolve } from 'path';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: ['electron-store', 'uuid'],
+      }),
+    ],
     build: {
       rollupOptions: {
         external: ['macadam', 'grandiose'],
@@ -12,6 +16,14 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/preload/index.ts'),
+          output: resolve(__dirname, 'src/preload/output.ts'),
+        },
+      },
+    },
   },
   renderer: {
     resolve: {

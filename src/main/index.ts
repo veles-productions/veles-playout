@@ -16,6 +16,7 @@ import {
   ipcMain,
   session,
 } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
 import * as fs from 'fs';
 import { PlayoutEngine } from './engine';
@@ -29,6 +30,8 @@ import { getConfig, setConfig, config } from './config';
 import { getCacheDir } from './template/paths';
 import { buildTemplateDoc } from './template/builder';
 import { buildOGrafHostDoc, isOGrafTemplate } from './template/ograf';
+import { generateTestSignal } from './template/test-signals';
+import { detectHardware } from './hardware';
 
 // ── Globals ──
 
@@ -165,11 +168,25 @@ app.whenReady().then(async () => {
   wsServer = new WebSocketServer(engine, wsPort);
   wsServer.start();
 
+  // Forward client connection events to control window
+  wsServer.on('clientChange', (info) => {
+    if (controlWindow && !controlWindow.isDestroyed()) {
+      controlWindow.webContents.send('playout:connection', info);
+    }
+  });
+
   // Register IPC handlers
   registerIpcHandlers();
 
   // Create control window
   createControlWindow();
+
+  // Auto-update: check GitHub Releases for newer version
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+    console.warn('[Playout] Auto-update check failed:', err);
+  });
 });
 
 app.on('window-all-closed', () => {
@@ -203,17 +220,10 @@ function createOffscreenWindow(width: number, height: number, frameRate: number)
   win.webContents.setFrameRate(frameRate);
 
   // Load the blank template host page
-  const templateHtml = path.join(__dirname, '../renderer/template/index.html');
-  if (fs.existsSync(templateHtml)) {
-    win.loadFile(templateHtml);
+  if (process.env.ELECTRON_RENDERER_URL) {
+    win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/template/index.html`);
   } else {
-    // Fallback: load inline blank page
-    win.loadURL(
-      'data:text/html,' +
-        encodeURIComponent(
-          '<!DOCTYPE html><html><head><style>html,body{margin:0;padding:0;background:transparent;width:1920px;height:1080px;overflow:hidden;}</style></head><body></body></html>'
-        )
-    );
+    win.loadFile(path.join(__dirname, '../renderer/template/index.html'));
   }
 
   return win;
@@ -233,17 +243,11 @@ function createControlWindow(): void {
     },
   });
 
-  // Load the control window UI
-  const controlHtml = path.join(__dirname, '../renderer/control/index.html');
-  if (fs.existsSync(controlHtml)) {
-    controlWindow.loadFile(controlHtml);
+  // In dev mode, load from Vite dev server; in prod, load built file
+  if (process.env.ELECTRON_RENDERER_URL) {
+    controlWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/control/index.html`);
   } else {
-    controlWindow.loadURL(
-      'data:text/html,' +
-        encodeURIComponent(
-          '<!DOCTYPE html><html><head><title>Veles Playout</title></head><body><h1>Veles Playout Control</h1><p>Control window loading...</p></body></html>'
-        )
-    );
+    controlWindow.loadFile(path.join(__dirname, '../renderer/control/index.html'));
   }
 
   controlWindow.on('closed', () => {
@@ -305,5 +309,40 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('playout:getVersion', () => {
     return app.getVersion();
+  });
+
+  ipcMain.handle('playout:loadTestSignal', async (_event, pattern: string, alpha?: boolean) => {
+    const html = generateTestSignal(pattern as any, alpha);
+    await engine.load({
+      templateHtml: html,
+      templateCss: '',
+      variables: {},
+      templateId: `test-signal:${pattern}`,
+    });
+  });
+
+  ipcMain.handle('playout:getHardware', () => {
+    return detectHardware();
+  });
+
+  // Transport controls
+  ipcMain.handle('playout:take', () => {
+    return engine.take();
+  });
+
+  ipcMain.handle('playout:clear', () => {
+    return engine.clear();
+  });
+
+  ipcMain.handle('playout:play', () => {
+    return engine.play();
+  });
+
+  ipcMain.handle('playout:stop', () => {
+    return engine.stop();
+  });
+
+  ipcMain.handle('playout:freeze', () => {
+    return engine.freeze();
   });
 }

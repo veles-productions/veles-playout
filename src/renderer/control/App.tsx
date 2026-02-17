@@ -47,6 +47,12 @@ interface PlayoutConfig {
 
 // ── Declare window API (exposed via preload) ──
 
+interface HardwareInfo {
+  sdi: { available: boolean; devices: Array<{ index: number; modelName: string; displayName: string }> };
+  ndi: { available: boolean };
+  displays: Array<{ id: number; label: string; width: number; height: number }>;
+}
+
 declare global {
   interface Window {
     playoutAPI: {
@@ -57,6 +63,13 @@ declare global {
       getSdiDevices(): Promise<unknown[]>;
       setOutput(config: unknown): Promise<void>;
       getVersion(): Promise<string>;
+      loadTestSignal(pattern: string, alpha?: boolean): Promise<void>;
+      getHardware(): Promise<HardwareInfo>;
+      take(): Promise<void>;
+      clear(): Promise<void>;
+      play(): Promise<void>;
+      stop(): Promise<void>;
+      freeze(): Promise<void>;
       onStateChange(cb: (state: EngineState) => void): () => void;
       onFrameStats(cb: (stats: FrameStats) => void): () => void;
       onConnection(cb: (info: unknown) => void): () => void;
@@ -243,6 +256,277 @@ function ConnectionInfo({ clientCount, wsPort }: { clientCount: number; wsPort: 
   );
 }
 
+function TransportControls({ engineState }: { engineState: EngineState }) {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const exec = useCallback(async (action: string, fn: () => Promise<void>) => {
+    setBusy(action);
+    try {
+      await fn();
+    } catch (err) {
+      console.error(`[Transport] ${action} failed:`, err);
+    }
+    setBusy(null);
+  }, []);
+
+  const isIdle = engineState.state === 'idle';
+  const isLive = engineState.state === 'on-air' || engineState.state === 'frozen';
+
+  const buttons: Array<{
+    id: string;
+    label: string;
+    color: string;
+    bg: string;
+    hoverBg: string;
+    disabled: boolean;
+    large?: boolean;
+    fn: () => Promise<void>;
+  }> = [
+    {
+      id: 'play',
+      label: 'PLAY',
+      color: '#22c55e',
+      bg: 'rgba(34, 197, 94, 0.15)',
+      hoverBg: 'rgba(34, 197, 94, 0.25)',
+      disabled: isIdle,
+      fn: () => window.playoutAPI.play(),
+    },
+    {
+      id: 'stop',
+      label: 'STOP',
+      color: '#f59e0b',
+      bg: 'rgba(245, 158, 11, 0.15)',
+      hoverBg: 'rgba(245, 158, 11, 0.25)',
+      disabled: isIdle,
+      fn: () => window.playoutAPI.stop(),
+    },
+    {
+      id: 'take',
+      label: 'TAKE',
+      color: '#dc2626',
+      bg: 'rgba(220, 38, 38, 0.15)',
+      hoverBg: 'rgba(220, 38, 38, 0.25)',
+      disabled: isIdle,
+      large: true,
+      fn: () => window.playoutAPI.take(),
+    },
+    {
+      id: 'clear',
+      label: 'CLEAR',
+      color: '#9ca3af',
+      bg: 'rgba(156, 163, 175, 0.15)',
+      hoverBg: 'rgba(156, 163, 175, 0.25)',
+      disabled: isIdle,
+      fn: () => window.playoutAPI.clear(),
+    },
+    {
+      id: 'freeze',
+      label: isLive && engineState.state === 'frozen' ? 'UNFREEZE' : 'FREEZE',
+      color: '#3b82f6',
+      bg: 'rgba(59, 130, 246, 0.15)',
+      hoverBg: 'rgba(59, 130, 246, 0.25)',
+      disabled: !isLive,
+      fn: () => window.playoutAPI.freeze(),
+    },
+  ];
+
+  return (
+    <div style={{
+      padding: '12px 16px',
+      background: 'var(--bg-surface-1)',
+      borderRadius: '8px',
+      border: '1px solid var(--border)',
+    }}>
+      <h3 style={{ fontSize: '13px', fontWeight: 600, marginBottom: '10px', color: 'var(--text-primary)' }}>
+        Transport
+      </h3>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch' }}>
+        {buttons.map((btn) => (
+          <button
+            key={btn.id}
+            onClick={() => exec(btn.id, btn.fn)}
+            disabled={btn.disabled || busy !== null}
+            style={{
+              flex: btn.large ? 1.5 : 1,
+              padding: btn.large ? '14px 8px' : '10px 8px',
+              fontSize: btn.large ? '14px' : '11px',
+              fontWeight: 700,
+              letterSpacing: '1px',
+              border: `2px solid ${btn.disabled ? 'var(--border)' : btn.color}`,
+              borderRadius: '6px',
+              background: btn.disabled ? 'var(--bg-surface-0)' : btn.bg,
+              color: btn.disabled ? 'var(--text-muted)' : btn.color,
+              cursor: btn.disabled || busy !== null ? 'not-allowed' : 'pointer',
+              opacity: btn.disabled ? 0.4 : busy === btn.id ? 0.7 : 1,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            {busy === btn.id ? '...' : btn.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TestSignalPanel() {
+  const [alpha, setAlpha] = useState(false);
+  const [loading, setLoading] = useState<string | null>(null);
+
+  const patterns = [
+    { id: 'smpte', label: 'SMPTE' },
+    { id: 'bars', label: 'Bars' },
+    { id: 'grid', label: 'Grid' },
+    { id: 'ramp', label: 'Ramp' },
+  ] as const;
+
+  const handleLoad = useCallback(async (pattern: string) => {
+    setLoading(pattern);
+    try {
+      await window.playoutAPI.loadTestSignal(pattern, alpha);
+    } catch (err) {
+      console.error('[TestSignal] Load failed:', err);
+    }
+    setLoading(null);
+  }, [alpha]);
+
+  return (
+    <div style={{
+      padding: '16px',
+      background: 'var(--bg-surface-1)',
+      borderRadius: '8px',
+      border: '1px solid var(--border)',
+    }}>
+      <h3 style={{ fontSize: '13px', fontWeight: 600, marginBottom: '12px', color: 'var(--text-primary)' }}>
+        Test Signals
+      </h3>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+        {patterns.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => handleLoad(p.id)}
+            disabled={loading !== null}
+            style={{
+              flex: 1,
+              padding: '8px 4px',
+              fontSize: '11px',
+              fontWeight: 600,
+              border: '1px solid var(--border)',
+              borderRadius: '6px',
+              background: loading === p.id ? 'var(--bg-surface-2)' : 'var(--bg-surface-0)',
+              color: 'var(--text-primary)',
+              cursor: loading !== null ? 'wait' : 'pointer',
+              opacity: loading !== null && loading !== p.id ? 0.5 : 1,
+            }}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={alpha}
+          onChange={(e) => setAlpha(e.target.checked)}
+          style={{ accentColor: 'var(--green)' }}
+        />
+        Alpha variant (transparent bg)
+      </label>
+    </div>
+  );
+}
+
+function HardwarePanel() {
+  const [hw, setHw] = useState<HardwareInfo | null>(null);
+  const [scanning, setScanning] = useState(false);
+
+  const scan = useCallback(async () => {
+    setScanning(true);
+    try {
+      const info = await window.playoutAPI.getHardware();
+      setHw(info);
+    } catch (err) {
+      console.error('[Hardware] Scan failed:', err);
+    }
+    setScanning(false);
+  }, []);
+
+  useEffect(() => { scan(); }, [scan]);
+
+  return (
+    <div style={{
+      padding: '16px',
+      background: 'var(--bg-surface-1)',
+      borderRadius: '8px',
+      border: '1px solid var(--border)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+        <h3 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+          Hardware
+        </h3>
+        <button
+          onClick={scan}
+          disabled={scanning}
+          style={{
+            padding: '4px 10px',
+            fontSize: '10px',
+            fontWeight: 600,
+            border: '1px solid var(--border)',
+            borderRadius: '4px',
+            background: 'var(--bg-surface-0)',
+            color: 'var(--text-secondary)',
+            cursor: scanning ? 'wait' : 'pointer',
+          }}
+        >
+          {scanning ? 'Scanning...' : 'Rescan'}
+        </button>
+      </div>
+
+      {hw && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
+          {/* SDI */}
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--text-muted)' }}>SDI (DeckLink)</span>
+            <span style={{ color: hw.sdi.available ? 'var(--green)' : 'var(--text-muted)' }}>
+              {hw.sdi.available
+                ? `${hw.sdi.devices.length} device${hw.sdi.devices.length !== 1 ? 's' : ''}`
+                : 'Not available'}
+            </span>
+          </div>
+          {hw.sdi.available && hw.sdi.devices.length > 0 && (
+            <div style={{ paddingLeft: '12px', fontSize: '10px', color: 'var(--text-muted)' }}>
+              {hw.sdi.devices.map((d) => (
+                <div key={d.index}>{d.displayName} ({d.modelName})</div>
+              ))}
+            </div>
+          )}
+
+          {/* NDI */}
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--text-muted)' }}>NDI Runtime</span>
+            <span style={{ color: hw.ndi.available ? 'var(--green)' : 'var(--text-muted)' }}>
+              {hw.ndi.available ? 'Available' : 'Not available'}
+            </span>
+          </div>
+
+          {/* Displays */}
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--text-muted)' }}>Displays</span>
+            <span>{hw.displays.length}</span>
+          </div>
+          {hw.displays.length > 0 && (
+            <div style={{ paddingLeft: '12px', fontSize: '10px', color: 'var(--text-muted)' }}>
+              {hw.displays.map((d) => (
+                <div key={d.id}>{d.label} ({d.width}x{d.height})</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main App ──
 
 function App() {
@@ -356,11 +640,20 @@ function App() {
           </div>
         </div>
 
+        {/* Transport Controls */}
+        <TransportControls engineState={engineState} />
+
+        {/* Test Signals */}
+        <TestSignalPanel />
+
         {/* Output Config + Connection */}
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
           <OutputConfig config={config} displays={displays} />
           <ConnectionInfo clientCount={clientCount} wsPort={config?.wsPort ?? 9900} />
         </div>
+
+        {/* Hardware Info */}
+        <HardwarePanel />
       </div>
 
       {/* Footer */}
