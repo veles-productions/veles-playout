@@ -100,6 +100,18 @@ export class PlayoutEngine extends EventEmitter {
     this.emitState();
   }
 
+  /** Update variables on the live PGM window (hot update) */
+  async updatePgm(variables: Record<string, string>): Promise<void> {
+    if (!this.pgmWindow || this.state === 'idle') return;
+    if (this.pgmTemplate) {
+      this.pgmTemplate.variables = variables;
+    }
+    await this.pgmWindow.webContents.executeJavaScript(
+      `window.__updateFields(${JSON.stringify(variables)})`
+    );
+    this.emitState();
+  }
+
   /** Trigger play animation on preview */
   async play(): Promise<void> {
     if (!this.pvwWindow) return;

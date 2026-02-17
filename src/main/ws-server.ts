@@ -27,6 +27,7 @@ interface WsCommand {
   type:
     | 'load'
     | 'update'
+    | 'updatePgm'
     | 'play'
     | 'stop'
     | 'take'
@@ -211,6 +212,13 @@ export class WebSocketServer extends EventEmitter {
           const p = command.payload as Record<string, unknown> | undefined;
           const variables = (p?.variables as Record<string, string>) || {};
           await this.engine.update(variables);
+          break;
+        }
+
+        case 'updatePgm': {
+          const p = command.payload as Record<string, unknown> | undefined;
+          const variables = (p?.variables as Record<string, string>) || {};
+          await this.engine.updatePgm(variables);
           break;
         }
 
