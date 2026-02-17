@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Veles Alpha Output</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #000;
+      cursor: none;
+    }
+    canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      object-fit: contain;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="output"></canvas>
+  <script>
+    /**
+     * Alpha / Key Output Window — receives pre-extracted alpha-as-luma BGRA
+     * frames via preload IPC and renders to canvas.
+     *
+     * White = opaque, Black = transparent.
+     * Standard luma key signal for broadcast downstream keyers.
+     */
+    const canvas = document.getElementById('output');
+    const ctx = canvas.getContext('2d');
+
+    // Listen for frames via preload-exposed API
+    if (window.outputAPI) {
+      window.outputAPI.onFrame((data) => {
+        const { buffer, width, height } = data;
+
+        // Resize canvas if dimensions changed
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+
+        // BGRA → RGBA conversion (alpha already encoded as grayscale in RGB)
+        const pixels = new Uint8ClampedArray(buffer);
+        const rgba = new Uint8ClampedArray(pixels.length);
+
+        for (let i = 0; i < pixels.length; i += 4) {
+          rgba[i] = pixels[i + 2];     // R ← B (all channels same value)
+          rgba[i + 1] = pixels[i + 1]; // G ← G
+          rgba[i + 2] = pixels[i];     // B ← R
+          rgba[i + 3] = 255;           // A = fully opaque
+        }
+
+        const imageData = new ImageData(rgba, width, height);
+        ctx.putImageData(imageData, 0, 0);
+      });
+    }
+
+    // Keyboard handling
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.fullscreenElement) {
+        document.exitFullscreen();
+      }
+      if (e.key === 'F11') {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+        else document.exitFullscreen();
+      }
+    });
+  </script>
+</body>
+</html>

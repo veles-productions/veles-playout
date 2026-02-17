@@ -1,0 +1,20 @@
+appId: org.velesproductions.playout
+productName: Veles Playout
+directories:
+  output: release
+  buildResources: assets
+files:
+  - dist/**/*
+  - "!node_modules/macadam/build/**/*"
+  - "!node_modules/grandiose/build/**/*"
+win:
+  target: nsis
+  icon: assets/icons/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: true
+  createDesktopShortcut: true
+extraResources:
+  - from: assets/
+    to: assets/

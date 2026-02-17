@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1920, height=1080">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: transparent;
+    }
+    #template-mount {
+      width: 1920px;
+      height: 1080px;
+      position: relative;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="template-mount"></div>
+  <script>
+    /**
+     * Transparent host page for offscreen template rendering.
+     * Templates are injected via loadURL with data: URI or via executeJavaScript.
+     * This page serves as the initial blank state.
+     */
+
+    // IPC bridge functions (called from main process via executeJavaScript)
+    window.__loadTemplate = function(payload) {
+      const mount = document.getElementById('template-mount');
+      if (payload.templateHtml) {
+        mount.innerHTML = '';
+        const iframe = document.createElement('iframe');
+        iframe.style.cssText = 'width:1920px;height:1080px;border:none;background:transparent;';
+        iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+        mount.appendChild(iframe);
+        iframe.srcdoc = payload.templateHtml;
+      }
+    };
+
+    window.__updateFields = function(fields) {
+      const iframe = document.querySelector('#template-mount iframe');
+      if (iframe && iframe.contentWindow) {
+        iframe.contentWindow.postMessage({ type: 'updateGraphics', fields: fields }, '*');
+      }
+    };
+
+    window.__play = function() {
+      const iframe = document.querySelector('#template-mount iframe');
+      if (iframe && iframe.contentWindow) {
+        iframe.contentWindow.postMessage({ type: 'play' }, '*');
+      }
+    };
+
+    window.__stop = function() {
+      const iframe = document.querySelector('#template-mount iframe');
+      if (iframe && iframe.contentWindow) {
+        iframe.contentWindow.postMessage({ type: 'stop' }, '*');
+      }
+    };
+
+    window.__clear = function() {
+      const mount = document.getElementById('template-mount');
+      mount.innerHTML = '';
+    };
+  </script>
+</body>
+</html>

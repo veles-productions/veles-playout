@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Veles Playout</title>
+  <style>
+    :root {
+      --bg-primary: #0a0f1c;
+      --bg-surface-0: #0f1629;
+      --bg-surface-1: #151d32;
+      --bg-surface-2: #1a2340;
+      --bg-surface-3: #222d4a;
+      --text-primary: #e8ecf4;
+      --text-secondary: #9ba3b5;
+      --text-muted: #6b7280;
+      --brand-blue: #4d65ff;
+      --border: #1e2a45;
+      --red: #dc2626;
+      --green: #22c55e;
+      --amber: #f59e0b;
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      overflow: hidden;
+    }
+
+    #app { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="./App.tsx"></script>
+</body>
+</html>
