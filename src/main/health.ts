@@ -74,10 +74,9 @@ export class HealthServer {
     const uptimeMs = Date.now() - this.startedAt;
 
     const isOnAir = engineState === 'on-air' || engineState === 'frozen';
-    const isHealthy = stats.fps > 0 || !isOnAir;
 
     const body = JSON.stringify({
-      status: isHealthy ? 'ok' : 'degraded',
+      status: isOnAir ? 'on-air' : 'ok',
       engine: engineState,
       fps: stats.fps,
       dropped: stats.dropped,
@@ -87,7 +86,7 @@ export class HealthServer {
       version: app.getVersion(),
     });
 
-    res.writeHead(isHealthy ? 200 : 503, {
+    res.writeHead(200, {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-cache',
       'Access-Control-Allow-Origin': '*',

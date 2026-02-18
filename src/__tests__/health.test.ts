@@ -92,7 +92,7 @@ describe('HealthServer', () => {
     expect(res.headers['access-control-allow-origin']).toBe('*')
   })
 
-  it('GET /health returns 503 when degraded (on-air + 0 fps)', async () => {
+  it('GET /health returns 200 with on-air status when on-air + 0 fps', async () => {
     const port = getTestPort()
     const deps = createMockDeps({ engineState: 'on-air', fps: 0 })
     server = new HealthServer(port, deps)
@@ -100,10 +100,10 @@ describe('HealthServer', () => {
     await new Promise((r) => setTimeout(r, 100))
 
     const res = await httpGet(port, '/health')
-    expect(res.status).toBe(503)
+    expect(res.status).toBe(200)
 
     const body = JSON.parse(res.body)
-    expect(body.status).toBe('degraded')
+    expect(body.status).toBe('on-air')
     expect(body.engine).toBe('on-air')
   })
 
