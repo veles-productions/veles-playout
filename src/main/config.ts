@@ -12,6 +12,8 @@ export interface PlayoutConfig {
   wsPort: number;
   /** Optional auth token for WS connections (query param ?token=) */
   wsAuthToken: string;
+  /** HTTP health endpoint port (0 = disabled) */
+  healthPort: number;
   /** Target frame rate (25 = PAL, 30 = NTSC) */
   frameRate: number;
   /** Output resolution */
@@ -40,6 +42,7 @@ const defaults: PlayoutConfig = {
   apiUrl: 'http://localhost:8000',
   wsPort: 9900,
   wsAuthToken: '',
+  healthPort: 9901,
   frameRate: 25,
   resolution: { width: 1920, height: 1080 },
   rgbMonitor: -1,

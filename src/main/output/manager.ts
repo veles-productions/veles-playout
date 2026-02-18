@@ -23,6 +23,7 @@ export interface OutputDriver {
 export class OutputManager {
   private outputs = new Map<string, OutputDriver>();
   private keyBuffer: Buffer | null = null;
+  private errorCounts = new Map<string, number>();
 
   addOutput(id: string, output: OutputDriver): void {
     this.outputs.set(id, output);
@@ -79,15 +80,29 @@ export class OutputManager {
     }
 
     // Route to all outputs
-    for (const output of this.outputs.values()) {
+    const toRemove: string[] = [];
+    for (const [id, output] of this.outputs.entries()) {
       try {
         output.pushFrame(bgra, size);
         if (output.pushKeyFrame && this.keyBuffer) {
           output.pushKeyFrame(this.keyBuffer, size);
         }
       } catch (err) {
-        console.error(`[OutputManager] Error pushing frame to ${output.name}:`, err);
+        const count = (this.errorCounts.get(id) ?? 0) + 1;
+        this.errorCounts.set(id, count);
+        if (count <= 3) {
+          console.error(`[OutputManager] Error #${count} on ${output.name}:`, err);
+        }
+        if (count === 10) {
+          console.error(`[OutputManager] Disabling ${output.name} after 10 errors`);
+          toRemove.push(id);
+        }
       }
+    }
+    // Remove failed outputs outside iteration
+    for (const id of toRemove) {
+      this.removeOutput(id);
+      this.errorCounts.delete(id);
     }
   }
 

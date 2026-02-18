@@ -34,6 +34,7 @@ import { buildOGrafHostDoc, isOGrafTemplate } from './template/ograf';
 import { generateTestSignal } from './template/test-signals';
 import { detectHardware } from './hardware';
 import { AsRunLog } from './as-run-log';
+import { HealthServer } from './health';
 
 // ── Globals ──
 
@@ -46,7 +47,44 @@ let outputManager: OutputManager;
 let wsServer: WebSocketServer;
 let blackBurst: BlackBurst;
 let asRunLog: AsRunLog;
+let healthServer: HealthServer | null = null;
 let pvwThumbnailTimer: ReturnType<typeof setInterval> | null = null;
+
+// MIX transition state
+let mixCapture: FrameCapture | null = null;
+let mixOutgoingFrame: Buffer | null = null;
+let mixBlendBuffer: Buffer | null = null;
+
+/**
+ * Blend two BGRA frame buffers with a crossfade factor (0 = all src, 1 = all dst).
+ * Uses integer math (multiply + shift) for speed — processes ~8MB at 25fps.
+ */
+function blendFrames(src: Buffer, dst: Buffer, factor: number, out: Buffer): void {
+  const f = (factor * 256) | 0;
+  const inv = 256 - f;
+  const len = out.length;
+  // 4-way unroll (one BGRA pixel per iteration)
+  let i = 0;
+  for (; i < len - 3; i += 4) {
+    out[i]     = (src[i]     * inv + dst[i]     * f) >> 8;
+    out[i + 1] = (src[i + 1] * inv + dst[i + 1] * f) >> 8;
+    out[i + 2] = (src[i + 2] * inv + dst[i + 2] * f) >> 8;
+    out[i + 3] = (src[i + 3] * inv + dst[i + 3] * f) >> 8;
+  }
+  for (; i < len; i++) {
+    out[i] = (src[i] * inv + dst[i] * f) >> 8;
+  }
+}
+
+/** Clean up mix transition state */
+function cleanupMix(): void {
+  if (mixCapture) {
+    mixCapture.destroy();
+    mixCapture = null;
+  }
+  mixOutgoingFrame = null;
+  mixBlendBuffer = null;
+}
 
 // ── Protocol Registration ──
 // Must be registered before app is ready
@@ -139,9 +177,63 @@ app.whenReady().then(async () => {
     }
   });
 
+  // ── MIX Transition — Dual-capture BGRA frame blending ──
+  engine.on('mixStart', ({ duration, outgoing, incoming }: {
+    duration: number;
+    outgoing: BrowserWindow;
+    incoming: BrowserWindow;
+  }) => {
+    // Pre-allocate blend buffer (reused every frame)
+    const { width, height } = resolution;
+    mixBlendBuffer = Buffer.allocUnsafe(width * height * 4);
+
+    // Redirect existing pgmCapture to store outgoing frames (don't push to output)
+    pgmCapture.removeAllListeners('frame');
+    pgmCapture.removeAllListeners('stats');
+    pgmCapture.on('frame', (frame) => {
+      mixOutgoingFrame = frame.buffer;
+    });
+
+    // Set up capture on the incoming (PVW) window
+    mixCapture = new FrameCapture(frameRate);
+    mixCapture.attach(incoming);
+
+    const mixStartTime = Date.now();
+
+    mixCapture.on('frame', (frame) => {
+      const elapsed = Date.now() - mixStartTime;
+      const factor = Math.min(elapsed / duration, 1);
+
+      if (mixOutgoingFrame && mixBlendBuffer) {
+        blendFrames(mixOutgoingFrame, frame.buffer, factor, mixBlendBuffer);
+        outputManager.pushFrame(mixBlendBuffer, { width: frame.width, height: frame.height });
+      } else {
+        // No outgoing frame yet — show incoming directly
+        outputManager.pushFrame(frame.buffer, { width: frame.width, height: frame.height });
+      }
+    });
+
+    mixCapture.on('stats', (stats) => {
+      wsServer?.broadcastStats(stats);
+      if (controlWindow && !controlWindow.isDestroyed()) {
+        controlWindow.webContents.send('playout:frameStats', stats);
+      }
+    });
+
+    // Stop black burst during mix
+    blackBurst.stop();
+  });
+
+  engine.on('mixCancel', () => {
+    cleanupMix();
+  });
+
   // Handle engine take/clear → swap capture target
   engine.on('take', () => {
-    // First: set up new capture on the swapped PGM window
+    // Clean up any active mix transition
+    cleanupMix();
+
+    // Set up new capture on the swapped PGM window
     // (attach before stopping black burst to avoid frame gap)
     pgmCapture.destroy();
     pgmCapture = new FrameCapture(frameRate);
@@ -158,11 +250,13 @@ app.whenReady().then(async () => {
       }
     });
 
-    // Then: stop black burst (capture is already providing frames)
+    // Stop black burst (capture is already providing frames)
     blackBurst.stop();
   });
 
   engine.on('clear', () => {
+    // Clean up any active mix transition
+    cleanupMix();
     // Restart black burst to keep SDI outputs clean
     blackBurst.start(frameRate, (buffer, size) => outputManager.pushFrame(buffer, size));
   });
@@ -185,6 +279,17 @@ app.whenReady().then(async () => {
       controlWindow.webContents.send('playout:connection', info);
     }
   });
+
+  // ── HTTP Health Endpoint ──
+  const { healthPort } = getConfig();
+  if (healthPort > 0) {
+    healthServer = new HealthServer(healthPort, {
+      engine,
+      capture: pgmCapture,
+      wsServer,
+    });
+    healthServer.start();
+  }
 
   // ── As-Run Log (broadcast compliance) ──
   asRunLog = new AsRunLog();
@@ -290,6 +395,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   if (pvwThumbnailTimer) clearInterval(pvwThumbnailTimer);
+  healthServer?.stop();
   blackBurst?.stop();
   wsServer?.stop();
   pgmCapture?.destroy();

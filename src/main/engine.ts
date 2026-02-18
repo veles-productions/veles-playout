@@ -27,6 +27,7 @@ export interface EngineSnapshot {
   pgmTemplate: TemplatePayload | null;
   pvwReady: boolean;
   pgmReady: boolean;
+  mixing: boolean;
 }
 
 export class PlayoutEngine extends EventEmitter {
@@ -37,6 +38,8 @@ export class PlayoutEngine extends EventEmitter {
   private pgmTemplate: TemplatePayload | null = null;
   private pvwReady = false;
   private pgmReady = false;
+  private mixing = false;
+  private mixTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     super();
@@ -69,6 +72,7 @@ export class PlayoutEngine extends EventEmitter {
       pgmTemplate: this.pgmTemplate,
       pvwReady: this.pvwReady,
       pgmReady: this.pgmReady,
+      mixing: this.mixing,
     };
   }
 
@@ -139,6 +143,13 @@ export class PlayoutEngine extends EventEmitter {
       throw new Error('No template loaded in preview');
     }
 
+    // Cancel any in-progress mix transition
+    if (this.mixTimeout) {
+      clearTimeout(this.mixTimeout);
+      this.mixTimeout = null;
+      this.mixing = false;
+    }
+
     // Swap references
     const oldPgm = this.pgmWindow;
     const oldPgmTemplate = this.pgmTemplate;
@@ -166,8 +177,82 @@ export class PlayoutEngine extends EventEmitter {
     this.emit('take');
   }
 
+  /**
+   * MIX TAKE — crossfade from PGM to PVW over durationMs.
+   *
+   * Emits 'mixStart' so the capture pipeline can set up dual-window
+   * frame blending. After the duration, completes the window swap
+   * and emits 'take' like a normal transition.
+   */
+  async takeMix(durationMs: number): Promise<void> {
+    if (!this.pvwWindow || !this.pgmWindow) {
+      throw new Error('Windows not attached');
+    }
+    if (!this.pvwReady || !this.pvwTemplate) {
+      throw new Error('No template loaded in preview');
+    }
+
+    // Cancel any existing mix
+    if (this.mixTimeout) {
+      clearTimeout(this.mixTimeout);
+      this.mixTimeout = null;
+    }
+
+    this.mixing = true;
+
+    // Start play on PVW (incoming content starts animating)
+    await this.pvwWindow.webContents.executeJavaScript(`window.__play()`);
+
+    // Notify capture pipeline to set up dual capture + blending
+    this.emit('mixStart', {
+      duration: durationMs,
+      outgoing: this.pgmWindow,
+      incoming: this.pvwWindow,
+    });
+    this.emitState();
+
+    // After duration, complete the swap
+    return new Promise((resolve) => {
+      this.mixTimeout = setTimeout(async () => {
+        this.mixing = false;
+        this.mixTimeout = null;
+
+        // Swap references (same as normal take, but play already triggered)
+        const oldPgm = this.pgmWindow!;
+        const oldPgmTemplate = this.pgmTemplate;
+
+        this.pgmWindow = this.pvwWindow;
+        this.pgmTemplate = this.pvwTemplate;
+        this.pgmReady = true;
+
+        this.pvwWindow = oldPgm;
+        this.pvwTemplate = oldPgmTemplate;
+        this.pvwReady = false;
+
+        // Stop animation on old PGM (now PVW)
+        try {
+          await this.pvwWindow!.webContents.executeJavaScript(`window.__stop()`);
+        } catch {
+          // may not have stop function if it was idle
+        }
+
+        this.setState('on-air');
+        this.emit('take');
+        resolve();
+      }, durationMs);
+    });
+  }
+
   /** Clear program — go to black */
   async clear(): Promise<void> {
+    // Cancel any in-progress mix transition
+    if (this.mixTimeout) {
+      clearTimeout(this.mixTimeout);
+      this.mixTimeout = null;
+      this.mixing = false;
+      this.emit('mixCancel');
+    }
+
     if (this.pgmWindow) {
       try {
         await this.pgmWindow.webContents.executeJavaScript(`window.__clear()`);

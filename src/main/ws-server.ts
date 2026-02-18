@@ -263,9 +263,16 @@ export class WebSocketServer extends EventEmitter {
           await this.engine.stop();
           break;
 
-        case 'take':
-          await this.engine.take();
+        case 'take': {
+          const tp = command.payload as Record<string, unknown> | undefined;
+          if (tp?.transition === 'mix') {
+            const duration = (tp?.duration as number) || 500;
+            await this.engine.takeMix(duration);
+          } else {
+            await this.engine.take();
+          }
           break;
+        }
 
         case 'clear':
           await this.engine.clear();

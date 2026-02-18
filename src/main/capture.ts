@@ -36,6 +36,8 @@ export class FrameCapture extends EventEmitter {
   private frozen = false;
   private lastFrame: FrameData | null = null;
   private statsInterval: ReturnType<typeof setInterval> | null = null;
+  private attachedWindow: BrowserWindow | null = null;
+  private paintHandler: ((_event: Event, _dirty: Electron.Rectangle, image: NativeImage) => void) | null = null;
 
   constructor(targetFps: number = 25) {
     super();
@@ -47,9 +49,10 @@ export class FrameCapture extends EventEmitter {
    * The window must have `webPreferences: { offscreen: true }`.
    */
   attach(window: BrowserWindow): void {
+    this.attachedWindow = window;
     window.webContents.setFrameRate(this.targetFps);
 
-    window.webContents.on('paint', (_event, _dirty, image: NativeImage) => {
+    this.paintHandler = (_event, _dirty, image) => {
       if (this.frozen && this.lastFrame) {
         // When frozen, re-emit the last frame instead of capturing new ones
         this.emit('frame', this.lastFrame);
@@ -75,7 +78,9 @@ export class FrameCapture extends EventEmitter {
       this.frameCount++;
       this.statsFrameCount++;
       this.emit('frame', frame);
-    });
+    };
+
+    window.webContents.on('paint', this.paintHandler as any);
 
     // Stats reporting every 1 second
     this.statsInterval = setInterval(() => {
@@ -108,6 +113,13 @@ export class FrameCapture extends EventEmitter {
   }
 
   destroy(): void {
+    // Remove paint listener from the attached window to prevent ghost handlers
+    if (this.attachedWindow && this.paintHandler && !this.attachedWindow.isDestroyed()) {
+      this.attachedWindow.webContents.removeListener('paint', this.paintHandler as any);
+    }
+    this.attachedWindow = null;
+    this.paintHandler = null;
+
     if (this.statsInterval) {
       clearInterval(this.statsInterval);
       this.statsInterval = null;
