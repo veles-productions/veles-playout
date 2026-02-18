@@ -88,6 +88,11 @@ export class PlayoutEngine extends EventEmitter {
       `window.__loadTemplate(${JSON.stringify(payload)})`
     );
 
+    // Auto-play in preview so the template is visible in the PVW thumbnail.
+    // Messages are buffered until the iframe loads, so this is safe to call
+    // immediately after __loadTemplate.
+    await this.pvwWindow.webContents.executeJavaScript(`window.__play()`);
+
     this.pvwReady = true;
     this.setState('pvw-loaded');
   }

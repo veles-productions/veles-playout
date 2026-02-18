@@ -89,6 +89,7 @@ describe('HealthServer', () => {
     expect(body.clients).toBe(1)
     expect(body.version).toBeDefined()
     expect(res.headers['content-type']).toBe('application/json')
+    expect(res.headers['access-control-allow-origin']).toBe('*')
   })
 
   it('GET /health returns 503 when degraded (on-air + 0 fps)', async () => {

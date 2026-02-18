@@ -24,53 +24,84 @@
   <script>
     /**
      * Transparent host page for offscreen template rendering.
-     * Templates are injected via loadURL with data: URI or via executeJavaScript.
-     * This page serves as the initial blank state.
+     * Templates are injected via executeJavaScript from the main process.
+     *
+     * Message buffering: commands sent before the iframe finishes loading
+     * are queued and flushed once the iframe's onload fires.
      */
+
+    var __iframeReady = false;
+    var __pendingMessages = [];
+    var __currentIframe = null;
+
+    function __sendToIframe(msg) {
+      if (__iframeReady && __currentIframe && __currentIframe.contentWindow) {
+        __currentIframe.contentWindow.postMessage(msg, '*');
+      } else {
+        __pendingMessages.push(msg);
+      }
+    }
+
+    function __flushPending() {
+      __iframeReady = true;
+      for (var i = 0; i < __pendingMessages.length; i++) {
+        if (__currentIframe && __currentIframe.contentWindow) {
+          __currentIframe.contentWindow.postMessage(__pendingMessages[i], '*');
+        }
+      }
+      __pendingMessages = [];
+    }
 
     // IPC bridge functions (called from main process via executeJavaScript)
     window.__loadTemplate = function(payload) {
-      const mount = document.getElementById('template-mount');
+      var mount = document.getElementById('template-mount');
       if (payload.templateHtml) {
+        // Reset state
+        __iframeReady = false;
+        __pendingMessages = [];
+        __currentIframe = null;
+
         mount.innerHTML = '';
-        const iframe = document.createElement('iframe');
+        var iframe = document.createElement('iframe');
         iframe.style.cssText = 'width:1920px;height:1080px;border:none;background:transparent;';
         iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+        __currentIframe = iframe;
+
+        iframe.onload = function() {
+          __flushPending();
+        };
+
         mount.appendChild(iframe);
         iframe.srcdoc = payload.templateHtml;
+
+        // Queue field update so variables are applied once iframe loads
+        if (payload.variables && Object.keys(payload.variables).length > 0) {
+          __sendToIframe({ type: 'updateGraphics', fields: payload.variables });
+        }
       }
     };
 
     window.__updateFields = function(fields) {
-      const iframe = document.querySelector('#template-mount iframe');
-      if (iframe && iframe.contentWindow) {
-        iframe.contentWindow.postMessage({ type: 'updateGraphics', fields: fields }, '*');
-      }
+      __sendToIframe({ type: 'updateGraphics', fields: fields });
     };
 
     window.__play = function() {
-      const iframe = document.querySelector('#template-mount iframe');
-      if (iframe && iframe.contentWindow) {
-        iframe.contentWindow.postMessage({ type: 'play' }, '*');
-      }
+      __sendToIframe({ type: 'play' });
     };
 
     window.__stop = function() {
-      const iframe = document.querySelector('#template-mount iframe');
-      if (iframe && iframe.contentWindow) {
-        iframe.contentWindow.postMessage({ type: 'stop' }, '*');
-      }
+      __sendToIframe({ type: 'stop' });
     };
 
     window.__next = function() {
-      const iframe = document.querySelector('#template-mount iframe');
-      if (iframe && iframe.contentWindow) {
-        iframe.contentWindow.postMessage({ type: 'next' }, '*');
-      }
+      __sendToIframe({ type: 'next' });
     };
 
     window.__clear = function() {
-      const mount = document.getElementById('template-mount');
+      __iframeReady = false;
+      __pendingMessages = [];
+      __currentIframe = null;
+      var mount = document.getElementById('template-mount');
       mount.innerHTML = '';
     };
   </script>

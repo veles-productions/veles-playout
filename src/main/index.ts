@@ -10,6 +10,7 @@
 import {
   app,
   BrowserWindow,
+  Menu,
   protocol,
   net,
   screen,
@@ -116,6 +117,9 @@ app.whenReady().then(async () => {
     // Fallback: return empty response
     return new Response('', { status: 404 });
   });
+
+  // Remove default menu bar (File, Edit, View, Window, Help)
+  Menu.setApplicationMenu(null);
 
   // Create engine
   engine = new PlayoutEngine();
@@ -352,19 +356,19 @@ app.whenReady().then(async () => {
     if (!controlWindow || controlWindow.isDestroyed()) return;
 
     try {
-      // PVW thumbnail
-      if (pvwWindow && !pvwWindow.isDestroyed()) {
-        // capturePage returns NativeImage, we get a small JPEG
-        const pvwImg = await pvwWindow.webContents.capturePage();
-        const pvwJpeg = pvwImg.resize({ width: 384 }).toJPEG(60);
+      // PVW thumbnail — use engine reference (tracks swaps after TAKE)
+      const pvwWin = engine.getPvwWindow();
+      if (pvwWin && !pvwWin.isDestroyed()) {
+        const pvwImg = await pvwWin.webContents.capturePage();
+        const pvwJpeg = pvwImg.resize({ width: 640 }).toJPEG(85);
         controlWindow.webContents.send('playout:pvwThumbnail', pvwJpeg.buffer);
       }
 
-      // PGM thumbnail
+      // PGM thumbnail — use engine reference (tracks swaps after TAKE)
       const pgmWin = engine.getPgmWindow();
       if (pgmWin && !pgmWin.isDestroyed()) {
         const pgmImg = await pgmWin.webContents.capturePage();
-        const pgmJpeg = pgmImg.resize({ width: 384 }).toJPEG(60);
+        const pgmJpeg = pgmImg.resize({ width: 640 }).toJPEG(85);
         controlWindow.webContents.send('playout:pgmThumbnail', pgmJpeg.buffer);
       }
     } catch {
@@ -493,6 +497,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('playout:setOutput', async (_event, outputConfig: unknown) => {
     // Dynamically enable/disable outputs based on config
     const cfg = outputConfig as Record<string, unknown>;
+    const winOutput = outputManager.getOutput('window') as WindowOutput | undefined;
 
     if (cfg.sdi !== undefined) {
       setConfig('sdi', cfg.sdi as typeof getConfig extends () => infer C ? C['sdi'] : never);
@@ -501,10 +506,20 @@ function registerIpcHandlers(): void {
       setConfig('ndi', cfg.ndi as typeof getConfig extends () => infer C ? C['ndi'] : never);
     }
     if (cfg.rgbMonitor !== undefined) {
-      setConfig('rgbMonitor', cfg.rgbMonitor as number);
+      const monitor = cfg.rgbMonitor as number;
+      setConfig('rgbMonitor', monitor);
+      if (winOutput) {
+        if (monitor >= 0) winOutput.openRgb(monitor);
+        else winOutput.closeRgb();
+      }
     }
     if (cfg.alphaMonitor !== undefined) {
-      setConfig('alphaMonitor', cfg.alphaMonitor as number);
+      const monitor = cfg.alphaMonitor as number;
+      setConfig('alphaMonitor', monitor);
+      if (winOutput) {
+        if (monitor >= 0) winOutput.openAlpha(monitor);
+        else winOutput.closeAlpha();
+      }
     }
   });
 

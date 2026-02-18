@@ -1,9 +1,10 @@
 /**
  * Veles Playout — Control Window Dashboard
  *
- * Panel-based layout for professional broadcast operation.
- * Left column: PVW + PGM thumbnails stacked
- * Right column: Transport + Test Signals + Output + Connection + Hardware
+ * Professional broadcast layout:
+ * Row 1: PVW + PGM side by side (16:9)
+ * Row 2: Transport controls
+ * Row 3: Test Signals + Connection + Output + Hardware
  */
 
 import React from 'react'
@@ -62,42 +63,42 @@ function App() {
         targetFps={state.config?.frameRate ?? 25}
       />
 
-      {/* Main Content — 2-column layout */}
+      {/* Main Content */}
       <div style={{
         flex: 1,
         overflow: 'auto',
         padding: '12px',
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gridTemplateRows: 'auto auto 1fr',
+        display: 'flex',
+        flexDirection: 'column',
         gap: '12px',
-        alignContent: 'start',
       }}>
-        {/* Left: PVW + PGM */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {/* Row 1: PVW + PGM side by side */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <PreviewPanel engineState={state.engineState} thumbUrl={state.pvwThumbUrl} />
           <ProgramPanel engineState={state.engineState} thumbUrl={state.pgmThumbUrl} />
         </div>
 
-        {/* Right: Controls */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <TransportPanel engineState={state.engineState} />
-          <TestSignalPanel />
-          <ConnectionPanel
-            clientCount={state.clientCount}
-            wsPort={state.config?.wsPort ?? 9900}
-          />
-        </div>
+        {/* Row 2: Transport */}
+        <TransportPanel engineState={state.engineState} />
 
-        {/* Full-width: Output + Hardware */}
-        <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
-          <OutputPanel
-            config={state.config}
-            displays={state.displays}
-            hardware={state.hardware}
-            onConfigChange={state.handleConfigChange}
-          />
-          <HardwarePanel />
+        {/* Row 3: Test + Connection | Output + Hardware */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <TestSignalPanel />
+            <ConnectionPanel
+              clientCount={state.clientCount}
+              wsPort={state.config?.wsPort ?? 9900}
+            />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <OutputPanel
+              config={state.config}
+              displays={state.displays}
+              hardware={state.hardware}
+              onConfigChange={state.handleConfigChange}
+            />
+            <HardwarePanel />
+          </div>
         </div>
       </div>
 

@@ -90,6 +90,7 @@ export class HealthServer {
     res.writeHead(isHealthy ? 200 : 503, {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
     });
     res.end(body);
   }
@@ -125,6 +126,7 @@ export class HealthServer {
     res.writeHead(200, {
       'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
       'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
     });
     res.end(lines.join('\n'));
   }

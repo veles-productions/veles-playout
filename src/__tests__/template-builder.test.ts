@@ -34,11 +34,17 @@ describe('buildTemplateDoc', () => {
   it('injects playout bridge script before </body>', () => {
     const result = buildTemplateDoc(basePayload)
     expect(result).toContain('playout-bridge')
-    expect(result).toContain('window.__loadTemplate')
     expect(result).toContain('window.__updateFields')
     expect(result).toContain('window.__play')
     expect(result).toContain('window.__stop')
     expect(result).toContain('window.__clear')
+  })
+
+  it('injects variables directly into bridge script', () => {
+    const result = buildTemplateDoc(basePayload)
+    // Variables should be serialized as inline JSON for direct injection
+    expect(result).toContain('"name":"World"')
+    expect(result).toContain('window.update')
   })
 
   it('bridge script includes postMessage listener', () => {

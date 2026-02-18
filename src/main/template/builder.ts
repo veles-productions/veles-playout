@@ -5,6 +5,9 @@
  * Builds a self-contained HTML document from template HTML + CSS,
  * with a postMessage bridge for field updates and play/stop commands.
  * Injects transparent background for alpha channel support.
+ *
+ * Variables are injected DIRECTLY into the bridge script as inline JSON
+ * so they're applied during script execution — no postMessage race conditions.
  */
 
 import type { TemplatePayload } from '../engine';
@@ -13,7 +16,8 @@ import type { TemplatePayload } from '../engine';
  * Build a complete HTML document for rendering in an offscreen BrowserWindow.
  * Includes:
  * - Transparent background (for alpha channel extraction)
- * - postMessage bridge (for IPC-based field updates and play/stop)
+ * - Direct variable injection (applied immediately on load)
+ * - postMessage bridge (for live field updates and play/stop)
  * - CSS overrides
  */
 export function buildTemplateDoc(
@@ -53,18 +57,28 @@ export function buildTemplateDoc(
     }
   }
 
-  // Inject postMessage bridge + IPC bridge for field updates and play/stop
-  const bridge = `<script id="playout-bridge">
-    // ── IPC bridge for Electron main process ──
-    // These functions are called via webContents.executeJavaScript()
+  // Serialize variables as JSON for direct injection into the bridge script.
+  // Escape </script> sequences in the JSON to prevent premature script tag closing.
+  const varsJson = JSON.stringify(payload.variables || {}).replace(/<\//g, '<\\/');
 
-    window.__loadTemplate = function(payload) {
-      // Template is already loaded as the document itself.
-      // This is called after the srcDoc is set, so just store the variables.
-      window.__currentVars = payload.variables || {};
-      if (typeof window.update === 'function') window.update(window.__currentVars);
-      else if (typeof window.updateGraphics === 'function') window.updateGraphics(window.__currentVars);
-    };
+  // Inject bridge script with direct variable injection + postMessage for live updates.
+  // The bridge runs AFTER all template scripts (caspar.js, registerPlay, etc.) since
+  // it's injected just before </body>. By this point window.update and window.play
+  // are guaranteed to be defined.
+  const bridge = `<script id="playout-bridge">
+    // ── Direct variable injection — applied immediately, no postMessage needed ──
+    (function() {
+      var __vars = ${varsJson};
+      if (__vars && Object.keys(__vars).length > 0) {
+        if (typeof window.update === 'function') window.update(__vars);
+        else if (typeof window.updateGraphics === 'function') window.updateGraphics(__vars);
+      }
+    })();
+
+    // ── IPC bridge for Electron main process ──
+    // These functions are called via webContents.executeJavaScript() or postMessage
+
+    window.__currentVars = ${varsJson};
 
     window.__updateFields = function(fields) {
       window.__currentVars = fields;
@@ -89,10 +103,11 @@ export function buildTemplateDoc(
       document.body.innerHTML = '';
     };
 
-    // ── Legacy postMessage bridge (kept for compatibility) ──
+    // ── postMessage bridge for live updates from host page ──
     window.addEventListener('message', function(e) {
       var d = e.data; if (!d) return;
       if (d.type === 'updateGraphics' && d.fields) {
+        window.__currentVars = d.fields;
         if (typeof window.update === 'function') window.update(d.fields);
         else if (typeof window.updateGraphics === 'function') window.updateGraphics(d.fields);
       }
