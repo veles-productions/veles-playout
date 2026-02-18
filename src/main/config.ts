@@ -10,6 +10,8 @@ export interface PlayoutConfig {
   apiUrl: string;
   /** WebSocket server port for studio connections */
   wsPort: number;
+  /** Optional auth token for WS connections (query param ?token=) */
+  wsAuthToken: string;
   /** Target frame rate (25 = PAL, 30 = NTSC) */
   frameRate: number;
   /** Output resolution */
@@ -37,6 +39,7 @@ export interface PlayoutConfig {
 const defaults: PlayoutConfig = {
   apiUrl: 'http://localhost:8000',
   wsPort: 9900,
+  wsAuthToken: '',
   frameRate: 25,
   resolution: { width: 1920, height: 1080 },
   rgbMonitor: -1,

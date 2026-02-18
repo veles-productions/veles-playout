@@ -74,13 +74,15 @@ declare global {
       onFrameStats(cb: (stats: FrameStats) => void): () => void;
       onConnection(cb: (info: unknown) => void): () => void;
       onError(cb: (error: string) => void): () => void;
+      onPvwThumbnail(cb: (buffer: ArrayBuffer) => void): () => void;
+      onPgmThumbnail(cb: (buffer: ArrayBuffer) => void): () => void;
     };
   }
 }
 
 // ── Components ──
 
-function StatusBar({ engineState, stats }: { engineState: EngineState; stats: FrameStats }) {
+function StatusBar({ engineState, stats, targetFps }: { engineState: EngineState; stats: FrameStats; targetFps: number }) {
   const isLive = engineState.state === 'on-air' || engineState.state === 'frozen';
   const isFrozen = engineState.state === 'frozen';
 
@@ -113,7 +115,7 @@ function StatusBar({ engineState, stats }: { engineState: EngineState; stats: Fr
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '20px', fontSize: '12px' }}>
         <span style={{ color: stats.fps >= 24 ? 'var(--green)' : 'var(--amber)' }}>
-          {stats.fps} FPS
+          {stats.fps}/{targetFps} FPS
         </span>
         <span style={{ color: stats.dropped > 0 ? 'var(--amber)' : 'var(--text-muted)' }}>
           Dropped: {stats.dropped}
@@ -126,8 +128,38 @@ function StatusBar({ engineState, stats }: { engineState: EngineState; stats: Fr
   );
 }
 
-function OutputConfig({ config, displays }: { config: PlayoutConfig | null; displays: DisplayInfo[] }) {
+function OutputConfig({
+  config,
+  displays,
+  hardware,
+  onConfigChange,
+}: {
+  config: PlayoutConfig | null;
+  displays: DisplayInfo[];
+  hardware: HardwareInfo | null;
+  onConfigChange: (key: string, value: unknown) => void;
+}) {
   if (!config) return null;
+
+  const selectStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '4px 6px',
+    fontSize: '10px',
+    border: '1px solid var(--border)',
+    borderRadius: '4px',
+    background: 'var(--bg-surface-1)',
+    color: 'var(--text-primary)',
+    marginTop: '4px',
+  };
+
+  const checkboxRowStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    marginBottom: '6px',
+  };
+
+  const sdiDevices = hardware?.sdi?.devices ?? [];
 
   return (
     <div style={{
@@ -148,16 +180,62 @@ function OutputConfig({ config, displays }: { config: PlayoutConfig | null; disp
           borderRadius: '6px',
           border: '1px solid var(--border)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
-            <div style={{
-              width: '6px', height: '6px', borderRadius: '50%',
-              background: config.sdi.enabled ? 'var(--green)' : 'var(--text-muted)',
-            }} />
+          <div style={checkboxRowStyle}>
+            <input
+              type="checkbox"
+              checked={config.sdi.enabled}
+              onChange={(e) => onConfigChange('sdi', { ...config.sdi, enabled: e.target.checked })}
+              style={{ accentColor: 'var(--green)' }}
+            />
             <span style={{ fontSize: '11px', fontWeight: 600 }}>SDI (DeckLink)</span>
           </div>
-          <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-            {config.sdi.enabled ? `Fill: ${config.sdi.fillDevice}, Key: ${config.sdi.keyDevice}` : 'Not configured'}
-          </span>
+          {config.sdi.enabled && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div>
+                <label style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Fill Device</label>
+                <select
+                  value={config.sdi.fillDevice}
+                  onChange={(e) => onConfigChange('sdi', { ...config.sdi, fillDevice: Number(e.target.value) })}
+                  style={selectStyle}
+                >
+                  {sdiDevices.length === 0 ? (
+                    <option value={config.sdi.fillDevice}>Device {config.sdi.fillDevice}</option>
+                  ) : (
+                    sdiDevices.map((d) => (
+                      <option key={d.index} value={d.index}>{d.displayName} ({d.index})</option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Key Device</label>
+                <select
+                  value={config.sdi.keyDevice}
+                  onChange={(e) => onConfigChange('sdi', { ...config.sdi, keyDevice: Number(e.target.value) })}
+                  style={selectStyle}
+                >
+                  {sdiDevices.length === 0 ? (
+                    <option value={config.sdi.keyDevice}>Device {config.sdi.keyDevice}</option>
+                  ) : (
+                    sdiDevices.map((d) => (
+                      <option key={d.index} value={d.index}>{d.displayName} ({d.index})</option>
+                    ))
+                  )}
+                </select>
+              </div>
+              {config.sdi.fillDevice === config.sdi.keyDevice && (
+                <span style={{ fontSize: '9px', color: 'var(--red)', fontWeight: 600 }}>
+                  Fill and Key must use different devices
+                </span>
+              )}
+              <span style={{ fontSize: '9px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                Restart required for SDI changes
+              </span>
+            </div>
+          )}
+          {!config.sdi.enabled && (
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Disabled</span>
+          )}
         </div>
 
         {/* NDI */}
@@ -167,16 +245,29 @@ function OutputConfig({ config, displays }: { config: PlayoutConfig | null; disp
           borderRadius: '6px',
           border: '1px solid var(--border)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
-            <div style={{
-              width: '6px', height: '6px', borderRadius: '50%',
-              background: config.ndi.enabled ? 'var(--green)' : 'var(--text-muted)',
-            }} />
+          <div style={checkboxRowStyle}>
+            <input
+              type="checkbox"
+              checked={config.ndi.enabled}
+              onChange={(e) => onConfigChange('ndi', { ...config.ndi, enabled: e.target.checked })}
+              style={{ accentColor: 'var(--green)' }}
+            />
             <span style={{ fontSize: '11px', fontWeight: 600 }}>NDI</span>
           </div>
-          <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-            {config.ndi.enabled ? config.ndi.senderName : 'Not configured'}
-          </span>
+          {config.ndi.enabled && (
+            <div>
+              <label style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Sender Name</label>
+              <input
+                type="text"
+                value={config.ndi.senderName}
+                onChange={(e) => onConfigChange('ndi', { ...config.ndi, senderName: e.target.value })}
+                style={{ ...selectStyle, padding: '4px 8px' }}
+              />
+            </div>
+          )}
+          {!config.ndi.enabled && (
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Disabled</span>
+          )}
         </div>
 
         {/* RGB Window */}
@@ -193,11 +284,16 @@ function OutputConfig({ config, displays }: { config: PlayoutConfig | null; disp
             }} />
             <span style={{ fontSize: '11px', fontWeight: 600 }}>RGB Window</span>
           </div>
-          <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-            {config.rgbMonitor >= 0
-              ? `Monitor ${config.rgbMonitor}${displays[config.rgbMonitor] ? ` (${displays[config.rgbMonitor].label || displays[config.rgbMonitor].size.width + 'x' + displays[config.rgbMonitor].size.height})` : ''}`
-              : 'Not assigned'}
-          </span>
+          <select
+            value={config.rgbMonitor}
+            onChange={(e) => onConfigChange('rgbMonitor', Number(e.target.value))}
+            style={selectStyle}
+          >
+            <option value={-1}>Not assigned</option>
+            {displays.map((d, i) => (
+              <option key={d.id} value={i}>{d.label || `Display ${i}`} ({d.size.width}x{d.size.height})</option>
+            ))}
+          </select>
         </div>
 
         {/* Alpha Window */}
@@ -214,11 +310,16 @@ function OutputConfig({ config, displays }: { config: PlayoutConfig | null; disp
             }} />
             <span style={{ fontSize: '11px', fontWeight: 600 }}>Alpha Window</span>
           </div>
-          <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-            {config.alphaMonitor >= 0
-              ? `Monitor ${config.alphaMonitor}`
-              : 'Not assigned'}
-          </span>
+          <select
+            value={config.alphaMonitor}
+            onChange={(e) => onConfigChange('alphaMonitor', Number(e.target.value))}
+            style={selectStyle}
+          >
+            <option value={-1}>Not assigned</option>
+            {displays.map((d, i) => (
+              <option key={d.id} value={i}>{d.label || `Display ${i}`} ({d.size.width}x{d.size.height})</option>
+            ))}
+          </select>
         </div>
       </div>
     </div>
@@ -302,7 +403,7 @@ function TransportControls({ engineState }: { engineState: EngineState }) {
     },
     {
       id: 'take',
-      label: 'TAKE',
+      label: 'TAKE [Space]',
       color: '#dc2626',
       bg: 'rgba(220, 38, 38, 0.15)',
       hoverBg: 'rgba(220, 38, 38, 0.25)',
@@ -312,7 +413,7 @@ function TransportControls({ engineState }: { engineState: EngineState }) {
     },
     {
       id: 'clear',
-      label: 'CLEAR',
+      label: 'CLEAR [Esc]',
       color: '#9ca3af',
       bg: 'rgba(156, 163, 175, 0.15)',
       hoverBg: 'rgba(156, 163, 175, 0.25)',
@@ -321,7 +422,7 @@ function TransportControls({ engineState }: { engineState: EngineState }) {
     },
     {
       id: 'freeze',
-      label: isLive && engineState.state === 'frozen' ? 'UNFREEZE' : 'FREEZE',
+      label: (isLive && engineState.state === 'frozen' ? 'UNFREEZE' : 'FREEZE') + ' [F]',
       color: '#3b82f6',
       bg: 'rgba(59, 130, 246, 0.15)',
       hoverBg: 'rgba(59, 130, 246, 0.25)',
@@ -542,6 +643,20 @@ function App() {
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
   const [version, setVersion] = useState('');
   const [clientCount, setClientCount] = useState(0);
+  const [hardware, setHardware] = useState<HardwareInfo | null>(null);
+  const [pvwThumbUrl, setPvwThumbUrl] = useState<string>('');
+  const [pgmThumbUrl, setPgmThumbUrl] = useState<string>('');
+
+  const handleConfigChange = useCallback(async (key: string, value: unknown) => {
+    try {
+      await window.playoutAPI.setConfig(key, value);
+      // Re-fetch config to reflect changes
+      const updated = await window.playoutAPI.getConfig();
+      setConfig(updated);
+    } catch (err) {
+      console.error('[Config] Update failed:', err);
+    }
+  }, []);
 
   useEffect(() => {
     const api = window.playoutAPI;
@@ -552,6 +667,7 @@ function App() {
     api.getConfig().then(setConfig);
     api.getDisplays().then(setDisplays);
     api.getVersion().then(setVersion);
+    api.getHardware().then(setHardware).catch(() => {});
 
     // Subscribe to events
     const unsubState = api.onStateChange(setEngineState);
@@ -560,17 +676,57 @@ function App() {
       setClientCount(info.totalClients ?? 0);
     });
 
+    // Subscribe to thumbnail frames
+    const unsubPvw = api.onPvwThumbnail((buffer: ArrayBuffer) => {
+      const blob = new Blob([buffer], { type: 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
+      setPvwThumbUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return url; });
+    });
+    const unsubPgm = api.onPgmThumbnail((buffer: ArrayBuffer) => {
+      const blob = new Blob([buffer], { type: 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
+      setPgmThumbUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return url; });
+    });
+
+    // Keyboard shortcuts
+    function onKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          api.take();
+          break;
+        case 'Escape':
+          e.preventDefault();
+          api.clear();
+          break;
+        case 'f':
+        case 'F':
+          if (!e.ctrlKey && !e.altKey && !e.metaKey) {
+            e.preventDefault();
+            api.freeze();
+          }
+          break;
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+
     return () => {
       unsubState();
       unsubStats();
       unsubConn();
+      unsubPvw();
+      unsubPgm();
+      window.removeEventListener('keydown', onKeyDown);
     };
   }, []);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Status Bar */}
-      <StatusBar engineState={engineState} stats={stats} />
+      <StatusBar engineState={engineState} stats={stats} targetFps={config?.frameRate ?? 25} />
 
       {/* Main Content */}
       <div style={{ flex: 1, overflow: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -592,10 +748,14 @@ function App() {
               <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: engineState.pvwReady ? 'var(--green)' : 'var(--text-muted)' }} />
               PREVIEW (PVW)
             </div>
-            <div style={{ aspectRatio: '16/9', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-                {engineState.pvwReady ? 'Template loaded' : 'No template'}
-              </span>
+            <div style={{ aspectRatio: '16/9', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+              {pvwThumbUrl ? (
+                <img src={pvwThumbUrl} alt="PVW" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              ) : (
+                <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                  {engineState.pvwReady ? 'Template loaded' : 'No template'}
+                </span>
+              )}
             </div>
           </div>
 
@@ -632,10 +792,14 @@ function App() {
                 </span>
               )}
             </div>
-            <div style={{ aspectRatio: '16/9', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-                {engineState.pgmReady ? 'On air' : 'No output'}
-              </span>
+            <div style={{ aspectRatio: '16/9', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+              {pgmThumbUrl ? (
+                <img src={pgmThumbUrl} alt="PGM" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              ) : (
+                <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                  {engineState.pgmReady ? 'On air' : 'No output'}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -648,7 +812,7 @@ function App() {
 
         {/* Output Config + Connection */}
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
-          <OutputConfig config={config} displays={displays} />
+          <OutputConfig config={config} displays={displays} hardware={hardware} onConfigChange={handleConfigChange} />
           <ConnectionInfo clientCount={clientCount} wsPort={config?.wsPort ?? 9900} />
         </div>
 

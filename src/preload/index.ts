@@ -42,6 +42,10 @@ export interface PlayoutAPI {
   stop(): Promise<void>;
   /** Transport: freeze PGM output */
   freeze(): Promise<void>;
+  /** Subscribe to PVW thumbnail frames (JPEG ArrayBuffer) */
+  onPvwThumbnail(callback: (buffer: ArrayBuffer) => void): () => void;
+  /** Subscribe to PGM thumbnail frames (JPEG ArrayBuffer) */
+  onPgmThumbnail(callback: (buffer: ArrayBuffer) => void): () => void;
 }
 
 contextBridge.exposeInMainWorld('playoutAPI', {
@@ -81,5 +85,15 @@ contextBridge.exposeInMainWorld('playoutAPI', {
     const handler = (_event: unknown, error: string) => callback(error);
     ipcRenderer.on('playout:error', handler);
     return () => ipcRenderer.removeListener('playout:error', handler);
+  },
+  onPvwThumbnail: (callback: (buffer: ArrayBuffer) => void) => {
+    const handler = (_event: unknown, buffer: ArrayBuffer) => callback(buffer);
+    ipcRenderer.on('playout:pvwThumbnail', handler);
+    return () => ipcRenderer.removeListener('playout:pvwThumbnail', handler);
+  },
+  onPgmThumbnail: (callback: (buffer: ArrayBuffer) => void) => {
+    const handler = (_event: unknown, buffer: ArrayBuffer) => callback(buffer);
+    ipcRenderer.on('playout:pgmThumbnail', handler);
+    return () => ipcRenderer.removeListener('playout:pgmThumbnail', handler);
   },
 } satisfies PlayoutAPI);

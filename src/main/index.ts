@@ -26,12 +26,14 @@ import { WindowOutput } from './output/window';
 import { SdiOutput } from './output/sdi';
 import { NdiOutput } from './output/ndi';
 import { WebSocketServer } from './ws-server';
+import { BlackBurst } from './output/blackburst';
 import { getConfig, setConfig, config } from './config';
 import { getCacheDir } from './template/paths';
 import { buildTemplateDoc } from './template/builder';
 import { buildOGrafHostDoc, isOGrafTemplate } from './template/ograf';
 import { generateTestSignal } from './template/test-signals';
 import { detectHardware } from './hardware';
+import { AsRunLog } from './as-run-log';
 
 // ── Globals ──
 
@@ -42,6 +44,9 @@ let engine: PlayoutEngine;
 let pgmCapture: FrameCapture;
 let outputManager: OutputManager;
 let wsServer: WebSocketServer;
+let blackBurst: BlackBurst;
+let asRunLog: AsRunLog;
+let pvwThumbnailTimer: ReturnType<typeof setInterval> | null = null;
 
 // ── Protocol Registration ──
 // Must be registered before app is ready
@@ -119,18 +124,12 @@ app.whenReady().then(async () => {
   const windowOutput = new WindowOutput();
   outputManager.addOutput('window', windowOutput);
 
-  // Route frames from capture to all outputs
-  pgmCapture.on('frame', (frame) => {
-    outputManager.pushFrame(frame.buffer, { width: frame.width, height: frame.height });
-  });
+  // Start black burst to keep SDI outputs clean when idle
+  blackBurst = new BlackBurst(resolution.width, resolution.height);
+  blackBurst.start(frameRate, (buffer, size) => outputManager.pushFrame(buffer, size));
 
-  // Forward capture stats
-  pgmCapture.on('stats', (stats) => {
-    wsServer?.broadcastStats(stats);
-    if (controlWindow && !controlWindow.isDestroyed()) {
-      controlWindow.webContents.send('playout:frameStats', stats);
-    }
-  });
+  // NOTE: Don't route pgmCapture frames at startup — only black burst
+  // provides frames when idle. Capture frames are routed after first TAKE.
 
   // Engine state changes → broadcast to WS clients and control window
   engine.on('state', (snapshot) => {
@@ -142,7 +141,8 @@ app.whenReady().then(async () => {
 
   // Handle engine take/clear → swap capture target
   engine.on('take', () => {
-    // After take, PGM window has changed (windows swapped)
+    // First: set up new capture on the swapped PGM window
+    // (attach before stopping black burst to avoid frame gap)
     pgmCapture.destroy();
     pgmCapture = new FrameCapture(frameRate);
     const newPgm = engine.getPgmWindow();
@@ -157,6 +157,14 @@ app.whenReady().then(async () => {
         controlWindow.webContents.send('playout:frameStats', stats);
       }
     });
+
+    // Then: stop black burst (capture is already providing frames)
+    blackBurst.stop();
+  });
+
+  engine.on('clear', () => {
+    // Restart black burst to keep SDI outputs clean
+    blackBurst.start(frameRate, (buffer, size) => outputManager.pushFrame(buffer, size));
   });
 
   engine.on('freeze', (frozen: boolean) => {
@@ -164,8 +172,11 @@ app.whenReady().then(async () => {
   });
 
   // Start WebSocket server
-  const { wsPort } = getConfig();
+  const { wsPort, wsAuthToken } = getConfig();
   wsServer = new WebSocketServer(engine, wsPort);
+  if (wsAuthToken) {
+    wsServer.setAuthToken(wsAuthToken);
+  }
   wsServer.start();
 
   // Forward client connection events to control window
@@ -174,6 +185,87 @@ app.whenReady().then(async () => {
       controlWindow.webContents.send('playout:connection', info);
     }
   });
+
+  // ── As-Run Log (broadcast compliance) ──
+  asRunLog = new AsRunLog();
+  wsServer.setAsRunLog(asRunLog);
+
+  engine.on('take', () => {
+    const snap = engine.getSnapshot();
+    asRunLog.write({
+      event: 'take',
+      templateId: snap.pgmTemplate?.templateId,
+      variables: snap.pgmTemplate?.variables,
+    });
+  });
+
+  engine.on('clear', () => {
+    asRunLog.write({ event: 'clear' });
+  });
+
+  engine.on('freeze', (frozen: boolean) => {
+    asRunLog.write({ event: frozen ? 'freeze' : 'unfreeze' });
+  });
+
+  // ── Template Crash Recovery ──
+  function setupCrashRecovery(win: BrowserWindow, label: string): void {
+    win.webContents.on('render-process-gone', (_event, details) => {
+      console.error(`[Playout] ${label} renderer crashed:`, details.reason);
+      asRunLog.write({ event: 'crash-recovery', details: `${label} crash: ${details.reason}` });
+
+      // Reload the template host page
+      if (process.env.ELECTRON_RENDERER_URL) {
+        win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/template/index.html`);
+      } else {
+        win.loadFile(path.join(__dirname, '../renderer/template/index.html'));
+      }
+
+      // If PGM crashed, restart black burst to avoid black output
+      if (label === 'PGM' && engine.getState() === 'on-air') {
+        engine.clear().catch(() => {});
+      }
+
+      // Notify WS clients
+      wsServer?.broadcastState(engine.getSnapshot());
+    });
+
+    win.webContents.on('unresponsive', () => {
+      console.warn(`[Playout] ${label} renderer unresponsive`);
+      asRunLog.write({ event: 'error', details: `${label} unresponsive` });
+    });
+
+    win.webContents.on('responsive', () => {
+      console.log(`[Playout] ${label} renderer responsive again`);
+    });
+  }
+
+  setupCrashRecovery(pvwWindow, 'PVW');
+  setupCrashRecovery(pgmWindow, 'PGM');
+
+  // ── PVW/PGM Thumbnail Capture for Control Window ──
+  pvwThumbnailTimer = setInterval(async () => {
+    if (!controlWindow || controlWindow.isDestroyed()) return;
+
+    try {
+      // PVW thumbnail
+      if (pvwWindow && !pvwWindow.isDestroyed()) {
+        // capturePage returns NativeImage, we get a small JPEG
+        const pvwImg = await pvwWindow.webContents.capturePage();
+        const pvwJpeg = pvwImg.resize({ width: 384 }).toJPEG(60);
+        controlWindow.webContents.send('playout:pvwThumbnail', pvwJpeg.buffer);
+      }
+
+      // PGM thumbnail
+      const pgmWin = engine.getPgmWindow();
+      if (pgmWin && !pgmWin.isDestroyed()) {
+        const pgmImg = await pgmWin.webContents.capturePage();
+        const pgmJpeg = pgmImg.resize({ width: 384 }).toJPEG(60);
+        controlWindow.webContents.send('playout:pgmThumbnail', pgmJpeg.buffer);
+      }
+    } catch {
+      // Ignore capture errors (window closing, etc.)
+    }
+  }, 250); // 4 fps thumbnails
 
   // Register IPC handlers
   registerIpcHandlers();
@@ -197,9 +289,12 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  if (pvwThumbnailTimer) clearInterval(pvwThumbnailTimer);
+  blackBurst?.stop();
   wsServer?.stop();
   pgmCapture?.destroy();
   outputManager?.destroy();
+  asRunLog?.destroy();
 });
 
 // ── Window Creation ──

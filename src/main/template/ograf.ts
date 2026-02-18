@@ -49,9 +49,15 @@ export function buildOGrafHostDoc(
     bgOverride?: string;
     autoPlay?: boolean;
     baseUrl?: string;
+    width?: number;
+    height?: number;
+    frameRate?: number;
   } = {},
 ): string {
   const { cssOverrides = '', bgOverride = '', autoPlay = true, baseUrl } = options;
+  const width = options.width ?? 1920;
+  const height = options.height ?? 1080;
+  const frameRate = options.frameRate ?? 50;
   const modulePath = getOGrafModulePath(template);
 
   // Use template:// protocol for local cache, or absolute URL if remote
@@ -67,18 +73,18 @@ export function buildOGrafHostDoc(
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=1920, height=1080">
+  <meta name="viewport" content="width=${width}, height=${height}">
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
-      width: 1920px;
-      height: 1080px;
+      width: ${width}px;
+      height: ${height}px;
       overflow: hidden;
       background: ${bgOverride || 'transparent'};
     }
     #ograf-mount {
-      width: 1920px;
-      height: 1080px;
+      width: ${width}px;
+      height: ${height}px;
       position: relative;
       overflow: hidden;
     }
@@ -106,7 +112,7 @@ export function buildOGrafHostDoc(
         await currentGraphic.load({
           data: ${dataJson},
           renderType: 'program',
-          renderCharacteristics: { width: 1920, height: 1080, frameRate: 50 }
+          renderCharacteristics: { width: ${width}, height: ${height}, frameRate: ${frameRate} }
         });
 
         ${autoPlay ? "setTimeout(() => { if (currentGraphic) currentGraphic.playAction({}); }, 300);" : ''}

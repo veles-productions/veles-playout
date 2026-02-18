@@ -32,6 +32,10 @@ export const IPC_CHANNELS = {
 
   // Output window frames
   OUTPUT_FRAME: 'output:frame',
+
+  // PVW/PGM thumbnail previews
+  PVW_THUMBNAIL: 'playout:pvwThumbnail',
+  PGM_THUMBNAIL: 'playout:pgmThumbnail',
 } as const;
 
 // ── Message Types ──

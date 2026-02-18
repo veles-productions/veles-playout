@@ -19,6 +19,7 @@ import { generateTestSignal, type TestPattern } from './template/test-signals';
 import { getConfig } from './config';
 import { detectHardware } from './hardware';
 import type { CaptureStats } from './capture';
+import type { AsRunLog } from './as-run-log';
 
 // ── Protocol Types ──
 
@@ -36,7 +37,8 @@ interface WsCommand {
     | 'setOutput'
     | 'status'
     | 'testSignal'
-    | 'getInfo';
+    | 'getInfo'
+    | 'auth';
   payload?: Record<string, unknown>;
 }
 
@@ -58,11 +60,23 @@ export class WebSocketServer extends EventEmitter {
   private clients = new Map<string, ClientInfo>();
   private engine: PlayoutEngine;
   private port: number;
+  private authToken: string | null = null;
+  private asRunLog: AsRunLog | null = null;
 
   constructor(engine: PlayoutEngine, port: number = 9900) {
     super();
     this.engine = engine;
     this.port = port;
+  }
+
+  /** Set an optional auth token — clients must send { type: "auth", token } as first message */
+  setAuthToken(token: string | null): void {
+    this.authToken = token;
+  }
+
+  /** Attach an as-run log instance for compliance logging */
+  setAsRunLog(log: AsRunLog): void {
+    this.asRunLog = log;
   }
 
   start(): void {
@@ -77,6 +91,18 @@ export class WebSocketServer extends EventEmitter {
         connectedAt: Date.now(),
         remoteAddress: req.socket.remoteAddress,
       };
+
+      // Auth check: if token is set, validate from query string
+      if (this.authToken) {
+        const url = new URL(req.url || '', `http://${req.headers.host}`);
+        const token = url.searchParams.get('token');
+        if (token !== this.authToken) {
+          console.warn(`[WS] Unauthorized client rejected from ${clientInfo.remoteAddress}`);
+          ws.close(4401, 'Unauthorized');
+          return;
+        }
+      }
+
       this.clients.set(clientId, clientInfo);
       console.log(`[WS] Client connected: ${clientId} from ${clientInfo.remoteAddress}`);
       this.emit('clientChange', {
@@ -193,10 +219,11 @@ export class WebSocketServer extends EventEmitter {
           // Build the full HTML document
           let builtHtml: string;
           if (payload.isOGraf) {
+            const cfg = getConfig();
             builtHtml = buildOGrafHostDoc(
               { is_ograf: true, ograf_manifest: payload.ografManifest },
               payload.variables || {},
-              { autoPlay: false },
+              { autoPlay: false, width: cfg.resolution.width, height: cfg.resolution.height, frameRate: cfg.frameRate },
             );
           } else {
             builtHtml = buildTemplateDoc(payload);
@@ -205,6 +232,12 @@ export class WebSocketServer extends EventEmitter {
           // Replace templateHtml with the built document
           payload.templateHtml = builtHtml;
           await this.engine.load(payload);
+
+          this.asRunLog?.write({
+            event: 'load',
+            templateId: payload.templateId,
+            variables: payload.variables,
+          });
           break;
         }
 
@@ -287,6 +320,11 @@ export class WebSocketServer extends EventEmitter {
             payload: this.engine.getSnapshot(),
           });
           return; // Don't send ack for status requests
+
+        case 'auth':
+          // Auth is handled at connection time via query param.
+          // This is a no-op for backward compatibility.
+          break;
       }
 
       // Send acknowledgment
