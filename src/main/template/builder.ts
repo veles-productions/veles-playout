@@ -80,6 +80,10 @@ export function buildTemplateDoc(
       if (typeof window.stop === 'function') window.stop();
     };
 
+    window.__next = function() {
+      if (typeof window.next === 'function') window.next();
+    };
+
     window.__clear = function() {
       if (typeof window.stop === 'function') window.stop();
       document.body.innerHTML = '';

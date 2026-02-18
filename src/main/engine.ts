@@ -266,6 +266,13 @@ export class PlayoutEngine extends EventEmitter {
     this.emit('clear');
   }
 
+  /** Advance multi-step graphics (e.g. OGraf next action) on PGM */
+  async next(): Promise<void> {
+    if (!this.pgmWindow || (this.state !== 'on-air' && this.state !== 'frozen')) return;
+    await this.pgmWindow.webContents.executeJavaScript(`window.__next()`);
+    this.emit('next');
+  }
+
   /** Toggle freeze on PGM output */
   freeze(): void {
     if (this.state === 'on-air') {

@@ -32,6 +32,7 @@ interface WsCommand {
     | 'play'
     | 'stop'
     | 'take'
+    | 'next'
     | 'clear'
     | 'freeze'
     | 'setOutput'
@@ -273,6 +274,10 @@ export class WebSocketServer extends EventEmitter {
           }
           break;
         }
+
+        case 'next':
+          await this.engine.next();
+          break;
 
         case 'clear':
           await this.engine.clear();

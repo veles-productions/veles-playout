@@ -161,6 +161,10 @@ export function buildOGrafHostDoc(
       if (currentGraphic) currentGraphic.stopAction({});
     };
 
+    window.__next = function() {
+      if (currentGraphic) currentGraphic.playAction({ delta: 1 });
+    };
+
     window.__clear = function() {
       if (currentGraphic) currentGraphic.stopAction({});
       document.getElementById('ograf-mount').innerHTML = '';

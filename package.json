@@ -1,6 +1,6 @@
 {
   "name": "veles-playout",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Veles Playout — Electron broadcast graphics renderer with SDI/NDI/window output",
   "author": "Veles Productions",
   "license": "MIT",

@@ -546,4 +546,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle('playout:freeze', () => {
     return engine.freeze();
   });
+
+  ipcMain.handle('playout:next', () => {
+    return engine.next();
+  });
 }

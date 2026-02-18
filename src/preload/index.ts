@@ -42,6 +42,8 @@ export interface PlayoutAPI {
   stop(): Promise<void>;
   /** Transport: freeze PGM output */
   freeze(): Promise<void>;
+  /** Transport: advance multi-step graphics (NEXT) */
+  next(): Promise<void>;
   /** Subscribe to PVW thumbnail frames (JPEG ArrayBuffer) */
   onPvwThumbnail(callback: (buffer: ArrayBuffer) => void): () => void;
   /** Subscribe to PGM thumbnail frames (JPEG ArrayBuffer) */
@@ -65,6 +67,7 @@ contextBridge.exposeInMainWorld('playoutAPI', {
   play: () => ipcRenderer.invoke('playout:play'),
   stop: () => ipcRenderer.invoke('playout:stop'),
   freeze: () => ipcRenderer.invoke('playout:freeze'),
+  next: () => ipcRenderer.invoke('playout:next'),
 
   onStateChange: (callback: (state: unknown) => void) => {
     const handler = (_event: unknown, state: unknown) => callback(state);
