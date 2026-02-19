@@ -138,6 +138,13 @@ export class WindowOutput implements OutputDriver {
     this.alphaWindow = await this.openOutputWindow('Veles Alpha Output', monitorIndex);
     this.alphaReady = true;
 
+    // Apply alpha-as-luma CSS: brightness(0) makes all content black,
+    // invert(1) flips to white. Alpha channel is preserved through CSS
+    // filters, so: opaque→white, transparent→black, semi→gray.
+    await this.alphaWindow.webContents.executeJavaScript(`
+      document.getElementById('template-mount').style.filter = 'brightness(0) invert(1)';
+    `);
+
     this.alphaWindow.on('closed', () => {
       this.alphaWindow = null;
       this.alphaReady = false;
