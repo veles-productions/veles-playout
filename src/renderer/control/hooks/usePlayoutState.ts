@@ -76,7 +76,13 @@ export function usePlayoutState(): PlayoutState & {
 
   const handleConfigChange = useCallback(async (key: string, value: unknown) => {
     try {
-      await window.playoutAPI.setConfig(key, value)
+      // Output-related keys need to go through setOutput to open/close windows
+      const outputKeys = ['rgbMonitor', 'alphaMonitor', 'sdi', 'ndi']
+      if (outputKeys.includes(key)) {
+        await window.playoutAPI.setOutput({ [key]: value })
+      } else {
+        await window.playoutAPI.setConfig(key, value)
+      }
       const updated = await window.playoutAPI.getConfig()
       setConfig(updated as PlayoutConfig)
     } catch (err) {
