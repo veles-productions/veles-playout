@@ -1,27 +1,14 @@
 /**
  * Frame capture from offscreen BrowserWindow paint events.
  *
- * Captures raw BGRA buffers at target frame rate.
+ * Captures raw BGRA buffers at target frame rate for SDI/NDI output.
  * No PNG encoding — direct uncompressed pixel data.
  *
  * Each 1920x1080 frame = 8,294,400 bytes (1920 * 1080 * 4).
  *
- * Architecture: Producer-Consumer with decoupled timing.
- *
- * PRODUCER (paint callback):
- *   Chromium fires paint events at up to 50fps (2x invalidation rate).
- *   The callback does ONLY a memcpy into a pre-allocated buffer (~2ms).
- *   No emission, no IPC, no heavy work — returns immediately so the
- *   compositor can start the next frame.
- *
- * CONSUMER (output timer):
- *   A fixed-rate setInterval fires at exactly target FPS (25fps = 40ms).
- *   Reads the latest captured frame and emits it to downstream outputs.
- *   The downstream work (alpha extraction, IPC sends to output windows)
- *   happens here, completely decoupled from the compositor.
- *
- * This ensures exactly 25fps output regardless of compositor timing,
- * with minimal latency (max 10ms between capture and output at 2x invalidation).
+ * Note: Window output (RGB monitors) does NOT use this pipeline.
+ * Output windows render templates directly for native 60fps display.
+ * This capture pipeline is for SDI/NDI hardware and thumbnails only.
  */
 
 import { BrowserWindow, NativeImage } from 'electron';
@@ -57,7 +44,6 @@ export class FrameCapture extends EventEmitter {
   private thumbnailEvery: number;
   private statsInterval: ReturnType<typeof setInterval> | null = null;
   private invalidateInterval: ReturnType<typeof setInterval> | null = null;
-  private outputInterval: ReturnType<typeof setInterval> | null = null;
   private attachedWindow: BrowserWindow | null = null;
   private paintHandler: ((_event: Event, _dirty: Electron.Rectangle, image: NativeImage) => void) | null = null;
 
@@ -75,10 +61,11 @@ export class FrameCapture extends EventEmitter {
     this.attachedWindow = window;
     window.webContents.setFrameRate(this.targetFps);
 
-    // ── PRODUCER: Fast paint callback (~2ms) ──
     this.paintHandler = (_event, _dirty, image) => {
-      // Frozen: don't update buffer, output timer re-emits lastFrame
-      if (this.frozen) return;
+      if (this.frozen && this.lastFrame) {
+        this.emit('frame', this.lastFrame);
+        return;
+      }
 
       const size = image.getSize();
       const bitmap = image.getBitmap();
@@ -88,20 +75,25 @@ export class FrameCapture extends EventEmitter {
         return;
       }
 
-      // Pre-allocated buffer: avoids 200MB/s GC pressure from Buffer.from()
+      // Pre-allocated buffer to reduce GC pressure (~200MB/s saved)
       if (!this.frameBuffer || this.frameBuffer.length !== bitmap.length) {
         this.frameBuffer = Buffer.allocUnsafe(bitmap.length);
       }
       bitmap.copy(this.frameBuffer);
 
-      this.lastFrame = {
+      const frame: FrameData = {
         buffer: this.frameBuffer,
         width: size.width,
         height: size.height,
         timestamp: Date.now(),
       };
 
-      // Thumbnail from paint event NativeImage (every Nth frame, ~0.5ms)
+      this.lastFrame = frame;
+      this.frameCount++;
+      this.statsFrameCount++;
+      this.emit('frame', frame);
+
+      // Thumbnail from paint event NativeImage (every Nth frame)
       this.thumbnailCounter++;
       if (this.thumbnailCounter >= this.thumbnailEvery) {
         this.thumbnailCounter = 0;
@@ -109,33 +101,15 @@ export class FrameCapture extends EventEmitter {
           const thumb = image.resize({ width: 384 }).toJPEG(70);
           this.emit('thumbnail', thumb.buffer);
         } catch {
-          // Ignore thumbnail errors (window closing, etc.)
+          // Ignore thumbnail errors
         }
       }
     };
 
     window.webContents.on('paint', this.paintHandler as any);
 
-    // ── CONSUMER: Fixed-rate output timer at target FPS ──
-    // Reads the latest captured frame and emits it downstream.
-    // Downstream work (alpha extraction, IPC to output windows) runs here,
-    // completely decoupled from the compositor's paint events.
-    // setInterval(40ms) delivers exactly 25fps as long as the emit callback
-    // completes within 40ms (alpha extraction + IPC ≈ 12ms, well within budget).
-    const frameMs = Math.round(1000 / this.targetFps);
-    this.outputInterval = setInterval(() => {
-      if (this.lastFrame) {
-        this.frameCount++;
-        this.statsFrameCount++;
-        this.emit('frame', this.lastFrame);
-      }
-    }, frameMs);
-
-    // ── Invalidation at 2x target FPS ──
-    // Forces the compositor to repaint for static content.
-    // At 2x rate, the latest frame is at most 10ms stale when the
-    // output timer reads it (vs 40ms at 1x rate).
-    const invalidateMs = Math.round(1000 / (this.targetFps * 2));
+    // Force continuous repaint for static templates
+    const invalidateMs = Math.round(1000 / this.targetFps);
     this.invalidateInterval = setInterval(() => {
       if (this.attachedWindow && !this.attachedWindow.isDestroyed()) {
         this.attachedWindow.webContents.invalidate();
@@ -173,7 +147,6 @@ export class FrameCapture extends EventEmitter {
   }
 
   destroy(): void {
-    // Remove paint listener from the attached window to prevent ghost handlers
     if (this.attachedWindow && this.paintHandler && !this.attachedWindow.isDestroyed()) {
       this.attachedWindow.webContents.removeListener('paint', this.paintHandler as any);
     }
@@ -181,10 +154,6 @@ export class FrameCapture extends EventEmitter {
     this.paintHandler = null;
     this.frameBuffer = null;
 
-    if (this.outputInterval) {
-      clearInterval(this.outputInterval);
-      this.outputInterval = null;
-    }
     if (this.invalidateInterval) {
       clearInterval(this.invalidateInterval);
       this.invalidateInterval = null;

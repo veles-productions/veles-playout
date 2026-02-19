@@ -278,6 +278,31 @@ app.whenReady().then(async () => {
     pgmCapture.setFrozen(frozen);
   });
 
+  // ── Window Output: Direct Template Rendering ──
+  // RGB output window renders templates natively (no capture→IPC pipeline).
+  // Mirror engine commands so the output window stays in sync with PGM.
+  const getWinOutput = () => outputManager.getOutput('window') as WindowOutput | undefined;
+
+  engine.on('load', (payload) => {
+    getWinOutput()?.loadTemplate(payload).catch(() => {});
+  });
+
+  engine.on('take', () => {
+    getWinOutput()?.rgbPlay().catch(() => {});
+  });
+
+  engine.on('clear', () => {
+    getWinOutput()?.rgbClear().catch(() => {});
+  });
+
+  engine.on('updatePgm', (variables) => {
+    getWinOutput()?.rgbUpdateFields(variables).catch(() => {});
+  });
+
+  engine.on('next', () => {
+    getWinOutput()?.rgbNext().catch(() => {});
+  });
+
   // Start WebSocket server
   const { wsPort, wsAuthToken } = getConfig();
   wsServer = new WebSocketServer(engine, wsPort);
@@ -519,8 +544,19 @@ function registerIpcHandlers(): void {
       const monitor = cfg.rgbMonitor as number;
       setConfig('rgbMonitor', monitor);
       if (winOutput) {
-        if (monitor >= 0) winOutput.openRgb(monitor);
-        else winOutput.closeRgb();
+        if (monitor >= 0) {
+          // openRgb resolves when template host page is loaded
+          winOutput.openRgb(monitor).then(async () => {
+            // If already on-air, sync PGM template to the new window
+            const snap = engine.getSnapshot();
+            if ((snap.state === 'on-air' || snap.state === 'frozen') && snap.pgmTemplate) {
+              await winOutput.loadTemplate(snap.pgmTemplate);
+              await winOutput.rgbPlay();
+            }
+          }).catch(() => {});
+        } else {
+          winOutput.closeRgb();
+        }
       }
     }
     if (cfg.alphaMonitor !== undefined) {

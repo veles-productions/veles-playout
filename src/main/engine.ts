@@ -95,6 +95,7 @@ export class PlayoutEngine extends EventEmitter {
 
     this.pvwReady = true;
     this.setState('pvw-loaded');
+    this.emit('load', payload);
   }
 
   /** Update variables on the preview window */
@@ -119,6 +120,7 @@ export class PlayoutEngine extends EventEmitter {
       `window.__updateFields(${JSON.stringify(variables)})`
     );
     this.emitState();
+    this.emit('updatePgm', variables);
   }
 
   /** Trigger play animation on preview */
