@@ -35,18 +35,18 @@ export interface HardwareInfo {
  * Detect available hardware outputs.
  * All probes are non-fatal — missing native modules just report unavailable.
  */
-export function detectHardware(): HardwareInfo {
+export async function detectHardware(): Promise<HardwareInfo> {
   return {
-    sdi: detectSdi(),
+    sdi: await detectSdi(),
     ndi: detectNdi(),
     displays: detectDisplays(),
   };
 }
 
-function detectSdi(): HardwareInfo['sdi'] {
+async function detectSdi(): Promise<HardwareInfo['sdi']> {
   try {
     const macadam = require('macadam');
-    const devices = macadam.getDeviceInfo();
+    const devices = await macadam.getDeviceInfo();
     return {
       available: true,
       devices: Array.isArray(devices)

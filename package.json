@@ -1,6 +1,6 @@
 {
   "name": "veles-playout",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Veles Playout — Electron broadcast graphics renderer with SDI/NDI/window output",
   "author": "Veles Productions",
   "license": "MIT",
@@ -9,7 +9,9 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "postinstall": "node scripts/patch-macadam.js",
     "rebuild": "electron-builder install-app-deps",
+    "rebuild:macadam": "node scripts/patch-macadam.js && npx @electron/rebuild -m node_modules/macadam",
     "dist": "electron-vite build && electron-builder --win",
     "dist:portable": "electron-vite build && electron-builder --win portable",
     "release": "electron-vite build && electron-builder --win --publish always",
@@ -19,20 +21,20 @@
   "dependencies": {
     "electron-store": "^11.0.0",
     "electron-updater": "^6.8.0",
-    "ws": "^8.18.0",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "ws": "^8.18.0"
   },
   "optionalDependencies": {
-    "macadam": "^2.0.0",
-    "grandiose": "^0.4.0"
+    "grandiose": "^0.4.0",
+    "macadam": "^2.0.18"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.0",
     "@types/node": "^22.13.0",
-    "@types/ws": "^8.5.0",
-    "@types/uuid": "^10.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.0",
     "electron": "^35.0.0",
     "electron-builder": "^26.0.0",
     "electron-vite": "^5.0.0",

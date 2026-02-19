@@ -5,8 +5,12 @@ directories:
   buildResources: assets
 files:
   - out/**/*
-  - "!node_modules/macadam/build/**/*"
-  - "!node_modules/grandiose/build/**/*"
+
+asarUnpack:
+  - node_modules/macadam/**/*.node
+  - node_modules/grandiose/**/*.node
+  - node_modules/segfault-handler/**/*.node
+  - node_modules/bindings/**/*
 
 win:
   target:

@@ -142,9 +142,25 @@ app.whenReady().then(async () => {
   // Initialize optional hardware outputs
   const cfg = getConfig();
 
+  // Log DeckLink detection at startup (even if SDI disabled) so testers
+  // can verify their card is seen
+  try {
+    const devices = await SdiOutput.getDevices();
+    if (devices.length > 0) {
+      console.log(`[Playout] DeckLink devices detected: ${JSON.stringify(devices)}`);
+    } else {
+      console.log('[Playout] No DeckLink devices found');
+    }
+  } catch {
+    console.log('[Playout] DeckLink enumeration unavailable (macadam not compiled)');
+  }
+
   if (cfg.sdi.enabled) {
     try {
       const sdi = new SdiOutput();
+      sdi.on('error', (err) => {
+        console.error('[SDI] Frame output error:', err instanceof Error ? err.message : err);
+      });
       await sdi.init(cfg.sdi);
       outputManager.addOutput('sdi', sdi);
     } catch (err) {
@@ -155,6 +171,9 @@ app.whenReady().then(async () => {
   if (cfg.ndi.enabled) {
     try {
       const ndi = new NdiOutput();
+      ndi.on('error', (err: unknown) => {
+        console.error('[NDI] Frame output error:', err instanceof Error ? err.message : err);
+      });
       await ndi.init(cfg.ndi);
       outputManager.addOutput('ndi', ndi);
     } catch (err) {
@@ -544,24 +563,67 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('playout:getSdiDevices', async () => {
-    try {
-      const macadam = require('macadam');
-      return await macadam.getDeviceInfo();
-    } catch {
-      return [];
-    }
+    return SdiOutput.getDevices();
   });
 
-  ipcMain.handle('playout:setOutput', async (_event, outputConfig: unknown) => {
-    // Dynamically enable/disable outputs based on config
+  // Shared output config handler (used by both IPC and WS)
+  async function handleSetOutput(outputConfig: unknown): Promise<void> {
     const cfg = outputConfig as Record<string, unknown>;
     const winOutput = outputManager.getOutput('window') as WindowOutput | undefined;
 
     if (cfg.sdi !== undefined) {
-      setConfig('sdi', cfg.sdi as typeof getConfig extends () => infer C ? C['sdi'] : never);
+      const sdiCfg = cfg.sdi as typeof getConfig extends () => infer C ? C['sdi'] : never;
+      setConfig('sdi', sdiCfg);
+
+      if (sdiCfg.enabled) {
+        // Remove existing SDI output if any (re-init with new config)
+        if (outputManager.getOutput('sdi')) {
+          outputManager.removeOutput('sdi');
+        }
+        try {
+          const sdi = new SdiOutput();
+          sdi.on('error', (err) => {
+            console.error('[SDI] Frame output error:', err instanceof Error ? err.message : err);
+          });
+          await sdi.init(sdiCfg);
+          outputManager.addOutput('sdi', sdi);
+          console.log('[Playout] SDI output enabled at runtime');
+        } catch (err) {
+          console.warn('[Playout] SDI output failed to initialize:', err);
+        }
+      } else {
+        // Disable SDI
+        if (outputManager.getOutput('sdi')) {
+          outputManager.removeOutput('sdi');
+          console.log('[Playout] SDI output disabled');
+        }
+      }
     }
     if (cfg.ndi !== undefined) {
-      setConfig('ndi', cfg.ndi as typeof getConfig extends () => infer C ? C['ndi'] : never);
+      const ndiCfg = cfg.ndi as typeof getConfig extends () => infer C ? C['ndi'] : never;
+      setConfig('ndi', ndiCfg);
+
+      if (ndiCfg.enabled) {
+        if (outputManager.getOutput('ndi')) {
+          outputManager.removeOutput('ndi');
+        }
+        try {
+          const ndi = new NdiOutput();
+          ndi.on('error', (err: unknown) => {
+            console.error('[NDI] Frame output error:', err instanceof Error ? err.message : err);
+          });
+          await ndi.init(ndiCfg);
+          outputManager.addOutput('ndi', ndi);
+          console.log('[Playout] NDI output enabled at runtime');
+        } catch (err) {
+          console.warn('[Playout] NDI output failed to initialize:', err);
+        }
+      } else {
+        if (outputManager.getOutput('ndi')) {
+          outputManager.removeOutput('ndi');
+          console.log('[Playout] NDI output disabled');
+        }
+      }
     }
     if (cfg.rgbMonitor !== undefined) {
       const monitor = cfg.rgbMonitor as number;
@@ -600,6 +662,17 @@ function registerIpcHandlers(): void {
         }
       }
     }
+  }
+
+  ipcMain.handle('playout:setOutput', (_event, outputConfig: unknown) => {
+    return handleSetOutput(outputConfig);
+  });
+
+  // Wire WS setOutput command to the same handler
+  wsServer.on('setOutput', (payload: unknown) => {
+    handleSetOutput(payload).catch((err) => {
+      console.error('[Playout] WS setOutput error:', err);
+    });
   });
 
   ipcMain.handle('playout:getVersion', () => {

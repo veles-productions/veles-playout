@@ -27,9 +27,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Remove SDI/NDI native modules (require hardware SDKs)
+      - name: Patch & rebuild macadam for Electron
         shell: bash
-        run: rm -rf node_modules/macadam node_modules/grandiose
+        run: |
+          node scripts/patch-macadam.js
+          npx @electron/rebuild -m node_modules/macadam -v $(node -e "console.log(require('electron/package.json').version)")
 
       - name: TypeScript check
         run: npx tsc --noEmit

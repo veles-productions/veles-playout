@@ -1,8 +1,12 @@
 /**
  * SDI Output via Blackmagic DeckLink (macadam).
  *
- * Outputs fill (BGRA) and key (alpha as luma BGRA) on separate sub-devices.
+ * Outputs fill (BGRA) and optionally key (alpha as luma BGRA) on separate sub-devices.
  * DeckLink Duo/Quad shares hardware clock across sub-devices for genlock.
+ *
+ * Uses displayFrame() for synchronous real-time frame push — each frame is
+ * displayed at the next hardware opportunity. No scheduler timeline or
+ * pre-roll needed.
  *
  * macadam is an optional dependency — gracefully degrades if not installed.
  */
@@ -35,6 +39,12 @@ export class SdiOutput extends EventEmitter implements OutputDriver {
   private fillPlayback: any = null;
   private keyPlayback: any = null;
   private initialized = false;
+  private hasKey = false;
+
+  /** Whether this output needs key frames from the OutputManager */
+  get needsKeyFrame(): boolean {
+    return this.hasKey;
+  }
 
   async init(config: SdiConfig): Promise<void> {
     if (!config.enabled) return;
@@ -54,52 +64,76 @@ export class SdiOutput extends EventEmitter implements OutputDriver {
     const displayMode = this.macadam[modeKey] || this.macadam.bmdModeHD1080i50;
     const pixelFormat = this.macadam.bmdFormat8BitBGRA;
 
+    // Initialize fill output (required)
     try {
-      // Initialize fill output
       this.fillPlayback = await this.macadam.playback({
         deviceIndex: config.fillDevice,
         displayMode,
         pixelFormat,
       });
-      console.log(`[SDI] Fill output initialized on device ${config.fillDevice}`);
-
-      // Initialize key output
-      this.keyPlayback = await this.macadam.playback({
-        deviceIndex: config.keyDevice,
-        displayMode,
-        pixelFormat,
-      });
-      console.log(`[SDI] Key output initialized on device ${config.keyDevice}`);
-
-      this.initialized = true;
-      this.emit('ready');
+      console.log(
+        `[SDI] Fill output initialized on device ${config.fillDevice} (${config.displayMode})`,
+        `— ${this.fillPlayback.width}x${this.fillPlayback.height}`,
+        `bufferSize=${this.fillPlayback.bufferSize}`,
+        `frameRate=${JSON.stringify(this.fillPlayback.frameRate)}`
+      );
     } catch (err) {
-      console.error('[SDI] Failed to initialize DeckLink playback:', err);
-      this.destroy();
+      console.error('[SDI] Failed to initialize fill playback:', err);
       throw err;
     }
+
+    // Initialize key output (optional — single-output cards like UltraStudio 4K Mini
+    // may not have a second sub-device)
+    if (config.keyDevice !== config.fillDevice) {
+      try {
+        this.keyPlayback = await this.macadam.playback({
+          deviceIndex: config.keyDevice,
+          displayMode,
+          pixelFormat,
+        });
+        this.hasKey = true;
+        console.log(`[SDI] Key output initialized on device ${config.keyDevice}`);
+      } catch (err) {
+        console.warn(
+          `[SDI] Key output on device ${config.keyDevice} unavailable — running fill-only mode.`,
+          'This is normal for single-output cards (e.g. UltraStudio 4K Mini).',
+          err instanceof Error ? err.message : err
+        );
+        this.keyPlayback = null;
+        this.hasKey = false;
+      }
+    }
+
+    this.initialized = true;
+    this.emit('ready');
   }
 
-  /** Push fill frame (BGRA) to DeckLink */
-  pushFrame(bgra: Buffer, size: Size): void {
+  /**
+   * Push fill frame (BGRA) to DeckLink.
+   * Uses displayFrame() for immediate synchronous display at the
+   * next hardware opportunity.
+   *
+   * displayFrame() returns a Promise — we use .catch() instead of
+   * try/catch to handle async rejections without blocking the frame loop.
+   */
+  pushFrame(bgra: Buffer, _size: Size): void {
     if (!this.initialized || !this.fillPlayback) return;
 
-    try {
-      this.fillPlayback.schedule({ video: bgra });
-    } catch (err) {
+    this.fillPlayback.displayFrame(bgra).catch((err: Error) => {
       this.emit('error', err);
-    }
+    });
   }
 
-  /** Push key frame (alpha as luma BGRA) to DeckLink */
-  pushKeyFrame(key: Buffer, size: Size): void {
+  /**
+   * Push key frame (alpha as luma BGRA) to DeckLink.
+   * Only called when hasKey is true (second SDI output available).
+   */
+  pushKeyFrame(key: Buffer, _size: Size): void {
     if (!this.initialized || !this.keyPlayback) return;
 
-    try {
-      this.keyPlayback.schedule({ video: key });
-    } catch (err) {
+    this.keyPlayback.displayFrame(key).catch((err: Error) => {
       this.emit('error', err);
-    }
+    });
   }
 
   /** Get available DeckLink devices */
@@ -107,9 +141,15 @@ export class SdiOutput extends EventEmitter implements OutputDriver {
     try {
       const macadam = require('macadam');
       return await macadam.getDeviceInfo();
-    } catch {
+    } catch (err) {
+      console.warn('[SDI] Device enumeration failed:', err instanceof Error ? err.message : err);
       return [];
     }
+  }
+
+  /** Whether key output is active */
+  hasKeyOutput(): boolean {
+    return this.hasKey;
   }
 
   destroy(): void {
@@ -130,6 +170,7 @@ export class SdiOutput extends EventEmitter implements OutputDriver {
       this.keyPlayback = null;
     }
     this.initialized = false;
+    this.hasKey = false;
     this.removeAllListeners();
   }
 }

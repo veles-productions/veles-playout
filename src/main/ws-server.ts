@@ -288,9 +288,8 @@ export class WebSocketServer extends EventEmitter {
           break;
 
         case 'setOutput': {
-          // Forward output config changes (handled in index.ts IPC)
-          // This is a pass-through for remote configuration
-          console.log('[WS] setOutput:', command.payload);
+          // Emit event so index.ts can handle output init/deinit
+          this.emit('setOutput', command.payload);
           break;
         }
 
@@ -311,7 +310,7 @@ export class WebSocketServer extends EventEmitter {
 
         case 'getInfo': {
           const cfg = getConfig();
-          const hw = detectHardware();
+          const hw = await detectHardware();
           this.send(client.ws, {
             type: 'info',
             payload: {

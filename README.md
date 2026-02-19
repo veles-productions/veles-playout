@@ -148,7 +148,7 @@ Connect to `ws://localhost:9900`. With auth enabled: `ws://localhost:9900?token=
 ```jsonc
 { "type": "state", "payload": { "state": "on-air", "pvwReady": true, "pgmReady": true, "mixing": false, ... } }
 { "type": "frameUpdate", "payload": { "fps": 25, "dropped": 0 } }
-{ "type": "info", "payload": { "version": "0.1.1", "resolution": { "width": 1920, "height": 1080 }, ... } }
+{ "type": "info", "payload": { "version": "0.1.7", "resolution": { "width": 1920, "height": 1080 }, ... } }
 { "type": "ack", "id": "cmd-123", "payload": { "success": true } }
 { "type": "error", "payload": { "message": "No template loaded in preview" } }
 ```
@@ -160,7 +160,7 @@ Connect to `ws://localhost:9900`. With auth enabled: `ws://localhost:9900?token=
 ```bash
 # JSON health check
 curl http://localhost:9901/health
-# → { "status": "ok", "engine": "on-air", "fps": 25, "dropped": 0, "uptime": 3600, "clients": 2, "version": "0.1.1" }
+# → { "status": "ok", "engine": "on-air", "fps": 25, "dropped": 0, "uptime": 3600, "clients": 2, "version": "0.1.7" }
 
 # Prometheus metrics
 curl http://localhost:9901/metrics
@@ -288,11 +288,87 @@ GitHub Actions builds on every push to `main`. To create a release:
 
 ```bash
 # Bump version in package.json, then:
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.7
+git push origin v0.1.7
 ```
 
 The workflow builds the NSIS installer and portable exe, then publishes them as a draft GitHub Release. Publish the draft to make it available for download and auto-updates.
+
+## Testing SDI Output
+
+This section is for testers verifying DeckLink SDI output on machines with Blackmagic hardware.
+
+### Prerequisites
+
+1. **Blackmagic Desktop Video drivers** — download the latest from [Blackmagic Support](https://www.blackmagic-design.com/support/). Install and reboot.
+2. **DeckLink card physically installed** — a DeckLink Duo, Quad, Mini, or UltraStudio device connected via PCIe or Thunderbolt.
+3. **SDI monitor or router** connected to the card's SDI output(s).
+4. Verify the card appears in **Blackmagic Desktop Video Setup** utility before launching Veles Playout.
+
+### Enabling SDI Output
+
+1. Launch `Veles-Playout-0.1.7-Portable.exe` (or use the installed version).
+2. In the Control Window, open the **Configuration** panel.
+3. Toggle **SDI Output** to ON.
+4. Set **Fill Device** — typically `0` (first sub-device). This is the main video output.
+5. Set **Key Device** — typically `1` (second sub-device, for alpha/key on Duo/Quad cards). If your card has only one output (e.g. UltraStudio 4K Mini), set it to the same value as Fill Device — the app will automatically run in fill-only mode.
+6. Set **Display Mode** — match your SDI chain (e.g. `HD1080i50` for 1080i PAL, `HD1080p25` for progressive PAL).
+7. Click **Apply** or the setting saves automatically.
+
+### Verification Steps
+
+| Step | What to check | Expected result |
+|------|---------------|-----------------|
+| 1. Launch app | Control window opens | Status shows IDLE, no errors |
+| 2. Enable SDI | Toggle SDI on | Console logs: `[SDI] Fill output initialized on device 0 (HD1080i50) — 1920x1080 bufferSize=...` |
+| 3. Check idle output | Look at SDI monitor | Clean black (black burst) — no static, no garbage |
+| 4. Load test signal | Click **SMPTE** in Test Signals | PVW thumbnail shows SMPTE bars |
+| 5. TAKE (Space) | Press Space or click TAKE | SDI monitor shows SMPTE bars, status = ON AIR |
+| 6. CLEAR (Escape) | Press Escape or click CLEAR | SDI monitor returns to clean black |
+| 7. MIX transition | Load another template, then TAKE with MIX | Smooth crossfade visible on SDI monitor |
+| 8. Hot update | While on-air, send `updatePgm` from Studio | Variable changes live on SDI without re-take |
+| 9. Key output (Duo/Quad) | Connect second SDI output to key input on mixer | Key output shows alpha as luma (white = opaque, black = transparent) |
+| 10. Health endpoint | `curl http://localhost:9901/health` | JSON with `fps: 25`, `status: ok` |
+
+### Log Locations
+
+All logs are in the Electron userData directory:
+
+| Log | Path | Format |
+|-----|------|--------|
+| **As-run log** | `%APPDATA%\veles-playout\logs\as-run-YYYY-MM-DD.jsonl` | JSON Lines — every load, take, clear, freeze event |
+| **Electron logs** | `%APPDATA%\veles-playout\logs\main.log` | General process logs |
+| **Config store** | `%APPDATA%\veles-playout\config.json` | Current settings (electron-store) |
+
+To open the logs folder quickly: press `Win+R`, type `%APPDATA%\veles-playout`, press Enter.
+
+Console output (SDI init messages, errors) is also visible:
+- **Installed version:** launch from cmd: `"C:\Users\<user>\AppData\Local\Programs\veles-playout\Veles Playout.exe"`
+- **Portable version:** launch from cmd to see stdout/stderr in the terminal
+
+### Troubleshooting
+
+| Problem | Likely cause | Fix |
+|---------|-------------|-----|
+| `[SDI] macadam not available` | Desktop Video drivers not installed or wrong version | Install latest Blackmagic Desktop Video, reboot |
+| `[SDI] Failed to initialize fill playback` | Card not detected or wrong device index | Check Blackmagic Desktop Video Setup, try device index 0 |
+| `[SDI] Key output unavailable — fill-only mode` | Single-output card (normal) | Not an error — fill-only mode works fine |
+| SDI shows black when ON AIR | Display mode mismatch | Match the display mode to your SDI chain (e.g. HD1080i50 for PAL interlaced) |
+| App crashes on SDI enable | macadam native module not built for this Electron version | Re-download the latest release or rebuild: `npm run rebuild:macadam` |
+| FPS drops on SDI | CPU bottleneck during capture | Close other GPU-heavy apps, check Task Manager |
+| `[SDI] Frame output error` | Intermittent hardware hiccup | Check cable connections; output auto-disables after 10 consecutive errors |
+
+### Reporting Issues
+
+When reporting an SDI issue, please include:
+1. **Card model** — e.g. DeckLink Duo 2, UltraStudio 4K Mini
+2. **Desktop Video version** — from Blackmagic Desktop Video Setup
+3. **Display mode** — the setting used in Veles Playout (e.g. HD1080i50)
+4. **As-run log** — the `.jsonl` file from the session
+5. **Console output** — launch from command line and copy any `[SDI]` lines
+6. **Screenshots** — of the SDI monitor output and the Veles Playout control window
+
+---
 
 ## Related
 

@@ -57,7 +57,7 @@ vi.mock('../main/config', () => ({
 }))
 
 vi.mock('../main/hardware', () => ({
-  detectHardware: vi.fn(() => ({
+  detectHardware: vi.fn(async () => ({
     sdi: { available: false, devices: [] },
     ndi: { available: false },
     displays: [{ id: 1, label: 'Test', width: 1920, height: 1080 }],
@@ -296,15 +296,18 @@ describe('WebSocketServer', () => {
     )
   })
 
-  it('handles getInfo command — sends info back', () => {
+  it('handles getInfo command — sends info back', async () => {
     simulateConnection()
     mockSocket.send.mockClear()
 
     sendCommand(mockSocket, { type: 'getInfo' })
 
-    expect(mockSocket.send).toHaveBeenCalledWith(
-      expect.stringContaining('"type":"info"')
-    )
+    // detectHardware is async — wait for the response
+    await vi.waitFor(() => {
+      expect(mockSocket.send).toHaveBeenCalledWith(
+        expect.stringContaining('"type":"info"')
+      )
+    })
   })
 
   it('handles testSignal command', async () => {
