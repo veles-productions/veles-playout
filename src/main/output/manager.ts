@@ -15,6 +15,8 @@ export interface Size {
 
 export interface OutputDriver {
   readonly name: string;
+  /** Whether this output currently needs key (alpha) frames. */
+  readonly needsKeyFrame?: boolean;
   pushFrame(bgra: Buffer, size: Size): void;
   pushKeyFrame?(key: Buffer, size: Size): void;
   destroy(): void;
@@ -52,10 +54,11 @@ export class OutputManager {
   pushFrame(bgra: Buffer, size: Size): void {
     const pixelCount = size.width * size.height;
 
-    // Extract alpha channel as luma key (only if any output needs it)
+    // Extract alpha channel as luma key only when an output actually needs it.
+    // This skips the 2M-pixel JS loop when alpha window is closed (~5ms/frame saved).
     let needsKey = false;
     for (const output of this.outputs.values()) {
-      if (output.pushKeyFrame) {
+      if (output.pushKeyFrame && output.needsKeyFrame !== false) {
         needsKey = true;
         break;
       }

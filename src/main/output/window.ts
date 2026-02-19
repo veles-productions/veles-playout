@@ -17,6 +17,11 @@ export class WindowOutput implements OutputDriver {
   private rgbReady = false;
   private alphaReady = false;
 
+  /** Only extract alpha channel when the alpha window is actually open */
+  get needsKeyFrame(): boolean {
+    return this.alphaReady && this.alphaWindow !== null && !this.alphaWindow.isDestroyed();
+  }
+
   /** Open RGB output window on specified monitor */
   openRgb(monitorIndex: number = -1): void {
     if (this.rgbWindow && !this.rgbWindow.isDestroyed()) {

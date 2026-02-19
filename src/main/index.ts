@@ -191,11 +191,15 @@ app.whenReady().then(async () => {
     const { width, height } = resolution;
     mixBlendBuffer = Buffer.allocUnsafe(width * height * 4);
 
-    // Redirect existing pgmCapture to store outgoing frames (don't push to output)
+    // Redirect existing pgmCapture to store outgoing frames (don't push to output).
+    // Must copy because FrameCapture pre-allocates and reuses its buffer.
     pgmCapture.removeAllListeners('frame');
     pgmCapture.removeAllListeners('stats');
     pgmCapture.on('frame', (frame) => {
-      mixOutgoingFrame = frame.buffer;
+      if (!mixOutgoingFrame || mixOutgoingFrame.length !== frame.buffer.length) {
+        mixOutgoingFrame = Buffer.allocUnsafe(frame.buffer.length);
+      }
+      frame.buffer.copy(mixOutgoingFrame);
     });
 
     // Set up capture on the incoming (PVW) window
@@ -251,6 +255,11 @@ app.whenReady().then(async () => {
       wsServer?.broadcastStats(stats);
       if (controlWindow && !controlWindow.isDestroyed()) {
         controlWindow.webContents.send('playout:frameStats', stats);
+      }
+    });
+    pgmCapture.on('thumbnail', (jpegBuffer: ArrayBuffer) => {
+      if (controlWindow && !controlWindow.isDestroyed()) {
+        controlWindow.webContents.send('playout:pgmThumbnail', jpegBuffer);
       }
     });
 
@@ -351,30 +360,31 @@ app.whenReady().then(async () => {
   setupCrashRecovery(pvwWindow, 'PVW');
   setupCrashRecovery(pgmWindow, 'PGM');
 
-  // ── PVW/PGM Thumbnail Capture for Control Window ──
+  // ── Thumbnail Pipeline (optimized) ──
+  // PGM thumbnails: derived from paint event NativeImages in FrameCapture
+  // (no capturePage() needed — avoids stealing compositor time from frame capture)
+  pgmCapture.on('thumbnail', (jpegBuffer: ArrayBuffer) => {
+    if (controlWindow && !controlWindow.isDestroyed()) {
+      controlWindow.webContents.send('playout:pgmThumbnail', jpegBuffer);
+    }
+  });
+
+  // PVW thumbnails: low-rate capturePage on non-critical preview window.
+  // PVW is a different renderer process, so this doesn't compete with PGM capture.
+  // 3fps is plenty for a dashboard preview thumbnail.
   pvwThumbnailTimer = setInterval(async () => {
     if (!controlWindow || controlWindow.isDestroyed()) return;
-
     try {
-      // PVW thumbnail — use engine reference (tracks swaps after TAKE)
       const pvwWin = engine.getPvwWindow();
       if (pvwWin && !pvwWin.isDestroyed()) {
-        const pvwImg = await pvwWin.webContents.capturePage();
-        const pvwJpeg = pvwImg.resize({ width: 640 }).toJPEG(85);
-        controlWindow.webContents.send('playout:pvwThumbnail', pvwJpeg.buffer);
-      }
-
-      // PGM thumbnail — use engine reference (tracks swaps after TAKE)
-      const pgmWin = engine.getPgmWindow();
-      if (pgmWin && !pgmWin.isDestroyed()) {
-        const pgmImg = await pgmWin.webContents.capturePage();
-        const pgmJpeg = pgmImg.resize({ width: 640 }).toJPEG(85);
-        controlWindow.webContents.send('playout:pgmThumbnail', pgmJpeg.buffer);
+        const img = await pvwWin.webContents.capturePage();
+        const jpeg = img.resize({ width: 384 }).toJPEG(70);
+        controlWindow.webContents.send('playout:pvwThumbnail', jpeg.buffer);
       }
     } catch {
       // Ignore capture errors (window closing, etc.)
     }
-  }, 100); // 10 fps thumbnails
+  }, 333); // 3 fps PVW thumbnails (was 10fps capturePage on BOTH windows)
 
   // Register IPC handlers
   registerIpcHandlers();
