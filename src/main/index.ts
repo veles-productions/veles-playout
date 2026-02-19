@@ -374,7 +374,7 @@ app.whenReady().then(async () => {
     } catch {
       // Ignore capture errors (window closing, etc.)
     }
-  }, 250); // 4 fps thumbnails
+  }, 100); // 10 fps thumbnails
 
   // Register IPC handlers
   registerIpcHandlers();
