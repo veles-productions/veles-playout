@@ -41,14 +41,14 @@ export class WindowOutput implements OutputDriver {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        preload: path.join(__dirname, '../../preload/output.js'),
+        preload: path.join(__dirname, '../preload/output.js'),
       },
     });
 
     if (process.env.ELECTRON_RENDERER_URL) {
       this.rgbWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/output/rgb.html`);
     } else {
-      this.rgbWindow.loadFile(path.join(__dirname, '../../renderer/output/rgb.html'));
+      this.rgbWindow.loadFile(path.join(__dirname, '../renderer/output/rgb.html'));
     }
 
     this.rgbWindow.webContents.on('did-finish-load', () => {
@@ -85,14 +85,14 @@ export class WindowOutput implements OutputDriver {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        preload: path.join(__dirname, '../../preload/output.js'),
+        preload: path.join(__dirname, '../preload/output.js'),
       },
     });
 
     if (process.env.ELECTRON_RENDERER_URL) {
       this.alphaWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/output/alpha.html`);
     } else {
-      this.alphaWindow.loadFile(path.join(__dirname, '../../renderer/output/alpha.html'));
+      this.alphaWindow.loadFile(path.join(__dirname, '../renderer/output/alpha.html'));
     }
 
     this.alphaWindow.webContents.on('did-finish-load', () => {
