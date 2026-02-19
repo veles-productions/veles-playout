@@ -1,8 +1,23 @@
+English | [Polski](README.pl.md)
+
+<div align="center">
+
+![Veles Playout](docs/images/hero-playout.jpg)
+
 # Veles Playout
 
-Standalone broadcast graphics renderer for the [Veles](https://github.com/veles-productions) TV automation platform. Renders HTML/CSS overlay templates via Chromium offscreen rendering and outputs uncompressed frames to DeckLink SDI, NDI, and fullscreen windows.
+**Standalone broadcast graphics renderer** for the Pellar TV automation platform
 
+[![Electron 35](https://img.shields.io/badge/Electron-35-47848F?logo=electron)](https://www.electronjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 ![Build](https://github.com/veles-productions/veles-playout/actions/workflows/build.yml/badge.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+
+</div>
+
+---
+
+Renders HTML/CSS overlay templates via Chromium offscreen rendering and outputs uncompressed frames to DeckLink SDI, NDI, and fullscreen windows. Controlled remotely from [Veles Studio](https://github.com/veles-productions/veles-studio) via WebSocket.
 
 ## Download
 
@@ -58,31 +73,34 @@ To connect from Veles Studio, open the Output page and enter `ws://localhost:990
 
 ## Architecture
 
-```
-                    ┌─────────────────────────────────┐
-                    │         Control Window           │
-                    │  Status · PVW/PGM Thumbnails     │
-                    │  Transport · Test Signals · Config│
-                    └────────────┬────────────────────┘
-                                 │ IPC
-                                 ▼
-┌────────────┐    ┌──────────────────────────────┐    ┌──────────────┐
-│ WS Client  │───▶│       Main Process            │───▶│ SDI Output   │
-│ (Studio)   │    │                                │    │ (DeckLink)   │
-│ port 9900  │◀───│  Engine ──▶ PVW BrowserWindow │    ├──────────────┤
-└────────────┘    │    │         (offscreen)       │    │ NDI Output   │
-                  │    │                           │───▶│ (grandiose)  │
-┌────────────┐    │    └──▶ PGM BrowserWindow      │    ├──────────────┤
-│ Health API │◀───│          (offscreen)           │    │ Window Output│
-│ port 9901  │    │              │                 │───▶│ (fullscreen) │
-└────────────┘    │              ▼                 │    │ RGB + Alpha  │
-                  │    FrameCapture / MIX Blender  │    └──────────────┘
-                  │      (paint → BGRA buffer)     │
-                  │              │                 │
-                  │              ▼                 │
-                  │         As-Run Log             │
-                  │    (as-run-YYYY-MM-DD.jsonl)    │
-                  └──────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Control["Control Window"]
+        STATUS[Status · PVW/PGM Thumbnails]
+        TRANSPORT[Transport · Test Signals · Config]
+    end
+
+    subgraph Main["Main Process"]
+        ENGINE[Engine State Machine]
+        PVW[PVW BrowserWindow<br/>offscreen]
+        PGM[PGM BrowserWindow<br/>offscreen]
+        CAPTURE[FrameCapture / MIX Blender<br/>paint → BGRA buffer]
+        LOG[As-Run Log<br/>as-run-YYYY-MM-DD.jsonl]
+    end
+
+    subgraph Outputs["Output Sinks"]
+        SDI[SDI Output<br/>DeckLink fill+key]
+        NDI[NDI Output<br/>grandiose]
+        WIN[Window Output<br/>RGB + Alpha fullscreen]
+    end
+
+    WS[WS Client · Studio<br/>port 9900] <--> ENGINE
+    HEALTH[Health API<br/>port 9901] --> Main
+    Control <-->|IPC| Main
+    ENGINE --> PVW & PGM
+    PVW & PGM --> CAPTURE
+    CAPTURE --> SDI & NDI & WIN
+    CAPTURE --> LOG
 ```
 
 **Engine states:** `idle` → `pvw-loaded` → `on-air` ⇆ `frozen`
