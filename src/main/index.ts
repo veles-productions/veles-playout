@@ -279,28 +279,43 @@ app.whenReady().then(async () => {
   });
 
   // ── Window Output: Direct Template Rendering ──
-  // RGB output window renders templates natively (no capture→IPC pipeline).
-  // Mirror engine commands so the output window stays in sync with PGM.
+  // Both RGB and Alpha output windows render templates natively (no IPC).
+  // Mirror engine commands so output windows stay in sync with PGM.
   const getWinOutput = () => outputManager.getOutput('window') as WindowOutput | undefined;
 
   engine.on('load', (payload) => {
-    getWinOutput()?.loadTemplate(payload).catch(() => {});
+    const w = getWinOutput();
+    if (!w) return;
+    w.loadTemplate(payload).catch(() => {});
+    w.alphaLoadTemplate(payload).catch(() => {});
   });
 
   engine.on('take', () => {
-    getWinOutput()?.rgbPlay().catch(() => {});
+    const w = getWinOutput();
+    if (!w) return;
+    w.rgbPlay().catch(() => {});
+    w.alphaPlay().catch(() => {});
   });
 
   engine.on('clear', () => {
-    getWinOutput()?.rgbClear().catch(() => {});
+    const w = getWinOutput();
+    if (!w) return;
+    w.rgbClear().catch(() => {});
+    w.alphaClear().catch(() => {});
   });
 
   engine.on('updatePgm', (variables) => {
-    getWinOutput()?.rgbUpdateFields(variables).catch(() => {});
+    const w = getWinOutput();
+    if (!w) return;
+    w.rgbUpdateFields(variables).catch(() => {});
+    w.alphaUpdateFields(variables).catch(() => {});
   });
 
   engine.on('next', () => {
-    getWinOutput()?.rgbNext().catch(() => {});
+    const w = getWinOutput();
+    if (!w) return;
+    w.rgbNext().catch(() => {});
+    w.alphaNext().catch(() => {});
   });
 
   // Start WebSocket server
@@ -563,8 +578,18 @@ function registerIpcHandlers(): void {
       const monitor = cfg.alphaMonitor as number;
       setConfig('alphaMonitor', monitor);
       if (winOutput) {
-        if (monitor >= 0) winOutput.openAlpha(monitor);
-        else winOutput.closeAlpha();
+        if (monitor >= 0) {
+          winOutput.openAlpha(monitor).then(async () => {
+            // If already on-air, sync PGM template to the alpha window
+            const snap = engine.getSnapshot();
+            if ((snap.state === 'on-air' || snap.state === 'frozen') && snap.pgmTemplate) {
+              await winOutput.alphaLoadTemplate(snap.pgmTemplate);
+              await winOutput.alphaPlay();
+            }
+          }).catch(() => {});
+        } else {
+          winOutput.closeAlpha();
+        }
       }
     }
   });
