@@ -36,6 +36,7 @@ export class FrameCapture extends EventEmitter {
   private frozen = false;
   private lastFrame: FrameData | null = null;
   private statsInterval: ReturnType<typeof setInterval> | null = null;
+  private invalidateInterval: ReturnType<typeof setInterval> | null = null;
   private attachedWindow: BrowserWindow | null = null;
   private paintHandler: ((_event: Event, _dirty: Electron.Rectangle, image: NativeImage) => void) | null = null;
 
@@ -82,6 +83,16 @@ export class FrameCapture extends EventEmitter {
 
     window.webContents.on('paint', this.paintHandler as any);
 
+    // Force continuous repaint at target FPS for broadcast output.
+    // Electron offscreen rendering only fires paint events when content changes.
+    // Static templates (animation completed) would produce 0 fps without this.
+    const invalidateMs = Math.round(1000 / this.targetFps);
+    this.invalidateInterval = setInterval(() => {
+      if (this.attachedWindow && !this.attachedWindow.isDestroyed()) {
+        this.attachedWindow.webContents.invalidate();
+      }
+    }, invalidateMs);
+
     // Stats reporting every 1 second
     this.statsInterval = setInterval(() => {
       const now = Date.now();
@@ -120,6 +131,10 @@ export class FrameCapture extends EventEmitter {
     this.attachedWindow = null;
     this.paintHandler = null;
 
+    if (this.invalidateInterval) {
+      clearInterval(this.invalidateInterval);
+      this.invalidateInterval = null;
+    }
     if (this.statsInterval) {
       clearInterval(this.statsInterval);
       this.statsInterval = null;
