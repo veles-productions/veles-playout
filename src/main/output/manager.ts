@@ -6,6 +6,12 @@
  * - SDI (fill + key as separate signals)
  * - NDI (BGRA with alpha preserved natively)
  * - Window (RGB + Alpha as separate fullscreen windows)
+ *
+ * Clock mode: when startClock(fps) is called, frames are buffered and
+ * pushed to outputs at a fixed cadence. This ensures SDI cards (which
+ * have their own hardware clock) always receive frames at the target
+ * rate, even if the capture pipeline delivers fewer (e.g. 22/25fps).
+ * Missed frames are repeated automatically ("frame hold").
  */
 
 export interface Size {
@@ -26,6 +32,11 @@ export class OutputManager {
   private outputs = new Map<string, OutputDriver>();
   private keyBuffer: Buffer | null = null;
   private errorCounts = new Map<string, number>();
+
+  // Clock-driven frame hold for SDI/NDI
+  private clockTimer: ReturnType<typeof setInterval> | null = null;
+  private heldFrame: Buffer | null = null;
+  private heldSize: Size | null = null;
 
   addOutput(id: string, output: OutputDriver): void {
     this.outputs.set(id, output);
@@ -48,14 +59,64 @@ export class OutputManager {
   }
 
   /**
-   * Push a BGRA frame to all active outputs.
-   * Extracts alpha channel as luma key for outputs that need it (SDI, window).
+   * Start clock-driven output at fixed frame rate.
+   * Frames pushed via pushFrame() are buffered; the clock pushes
+   * the latest frame to all outputs at exactly `fps` intervals.
+   * If no new frame arrives, the last one is repeated (frame hold).
+   */
+  startClock(fps: number): void {
+    this.stopClock();
+    const intervalMs = Math.round(1000 / fps);
+    this.clockTimer = setInterval(() => {
+      if (this.heldFrame && this.heldSize) {
+        this.distributeFrame(this.heldFrame, this.heldSize);
+      }
+    }, intervalMs);
+  }
+
+  /** Stop clock-driven output. Reverts to immediate push mode. */
+  stopClock(): void {
+    if (this.clockTimer) {
+      clearInterval(this.clockTimer);
+      this.clockTimer = null;
+    }
+    this.heldFrame = null;
+    this.heldSize = null;
+  }
+
+  /** Whether the clock is currently running. */
+  isClockRunning(): boolean {
+    return this.clockTimer !== null;
+  }
+
+  /**
+   * Push a BGRA frame.
+   * - Clock running: stores the frame; clock timer distributes at fixed rate.
+   * - No clock: distributes immediately (used by BlackBurst during idle).
    */
   pushFrame(bgra: Buffer, size: Size): void {
+    if (this.clockTimer) {
+      // Clock mode: buffer the frame for next tick
+      if (!this.heldFrame || this.heldFrame.length !== bgra.length) {
+        this.heldFrame = Buffer.allocUnsafe(bgra.length);
+      }
+      bgra.copy(this.heldFrame);
+      this.heldSize = size;
+    } else {
+      // Immediate mode (idle / BlackBurst)
+      this.distributeFrame(bgra, size);
+    }
+  }
+
+  /**
+   * Distribute a BGRA frame to all active outputs.
+   * Extracts alpha channel as luma key for outputs that need it (SDI).
+   */
+  private distributeFrame(bgra: Buffer, size: Size): void {
     const pixelCount = size.width * size.height;
 
     // Extract alpha channel as luma key only when an output actually needs it.
-    // This skips the 2M-pixel JS loop when alpha window is closed (~5ms/frame saved).
+    // This skips the 2M-pixel JS loop when no SDI is connected (~5ms/frame saved).
     let needsKey = false;
     for (const output of this.outputs.values()) {
       if (output.pushKeyFrame && output.needsKeyFrame !== false) {
@@ -110,6 +171,7 @@ export class OutputManager {
   }
 
   destroy(): void {
+    this.stopClock();
     for (const output of this.outputs.values()) {
       try {
         output.destroy();

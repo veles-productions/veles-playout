@@ -263,6 +263,12 @@ app.whenReady().then(async () => {
       }
     });
 
+    // Start clock-driven output so SDI always gets exactly 25fps.
+    // Capture delivers ~22fps; the clock repeats the last frame on missed ticks.
+    if (!outputManager.isClockRunning()) {
+      outputManager.startClock(frameRate);
+    }
+
     // Stop black burst (capture is already providing frames)
     blackBurst.stop();
   });
@@ -270,6 +276,8 @@ app.whenReady().then(async () => {
   engine.on('clear', () => {
     // Clean up any active mix transition
     cleanupMix();
+    // Stop clock — BlackBurst has its own timer for idle frames
+    outputManager.stopClock();
     // Restart black burst to keep SDI outputs clean
     blackBurst.start(frameRate, (buffer, size) => outputManager.pushFrame(buffer, size));
   });
