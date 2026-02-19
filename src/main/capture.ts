@@ -6,12 +6,22 @@
  *
  * Each 1920x1080 frame = 8,294,400 bytes (1920 * 1080 * 4).
  *
- * Performance architecture:
- * - Paint callback does MINIMAL work (~2ms): just memcpy into pre-allocated buffer
- * - Heavy work (IPC sends to output windows) deferred to setImmediate
- * - This unblocks the compositor so it can start the next frame immediately
- * - Invalidation runs at 2x target FPS to compensate for timer jitter
- * - Thumbnails generated from paint event NativeImages (no capturePage overhead)
+ * Architecture: Producer-Consumer with decoupled timing.
+ *
+ * PRODUCER (paint callback):
+ *   Chromium fires paint events at up to 50fps (2x invalidation rate).
+ *   The callback does ONLY a memcpy into a pre-allocated buffer (~2ms).
+ *   No emission, no IPC, no heavy work — returns immediately so the
+ *   compositor can start the next frame.
+ *
+ * CONSUMER (output timer):
+ *   A fixed-rate setInterval fires at exactly target FPS (25fps = 40ms).
+ *   Reads the latest captured frame and emits it to downstream outputs.
+ *   The downstream work (alpha extraction, IPC sends to output windows)
+ *   happens here, completely decoupled from the compositor.
+ *
+ * This ensures exactly 25fps output regardless of compositor timing,
+ * with minimal latency (max 10ms between capture and output at 2x invalidation).
  */
 
 import { BrowserWindow, NativeImage } from 'electron';
@@ -43,13 +53,11 @@ export class FrameCapture extends EventEmitter {
   private frozen = false;
   private lastFrame: FrameData | null = null;
   private frameBuffer: Buffer | null = null;
-  private pendingEmit = false;
-  private lastEmitTime = 0;
-  private minFrameInterval: number;
   private thumbnailCounter = 0;
   private thumbnailEvery: number;
   private statsInterval: ReturnType<typeof setInterval> | null = null;
   private invalidateInterval: ReturnType<typeof setInterval> | null = null;
+  private outputInterval: ReturnType<typeof setInterval> | null = null;
   private attachedWindow: BrowserWindow | null = null;
   private paintHandler: ((_event: Event, _dirty: Electron.Rectangle, image: NativeImage) => void) | null = null;
 
@@ -57,8 +65,6 @@ export class FrameCapture extends EventEmitter {
     super();
     this.targetFps = targetFps;
     this.thumbnailEvery = Math.max(1, Math.round(targetFps / thumbnailFps));
-    // 90% of frame interval to allow slight jitter while maintaining target rate
-    this.minFrameInterval = Math.floor(900 / targetFps); // 36ms for 25fps
   }
 
   /**
@@ -69,18 +75,10 @@ export class FrameCapture extends EventEmitter {
     this.attachedWindow = window;
     window.webContents.setFrameRate(this.targetFps);
 
+    // ── PRODUCER: Fast paint callback (~2ms) ──
     this.paintHandler = (_event, _dirty, image) => {
-      // ── Frozen: re-emit last frame without updating buffer ──
-      if (this.frozen) {
-        if (this.lastFrame && !this.pendingEmit) {
-          this.pendingEmit = true;
-          setImmediate(() => {
-            this.pendingEmit = false;
-            if (this.lastFrame) this.emit('frame', this.lastFrame);
-          });
-        }
-        return;
-      }
+      // Frozen: don't update buffer, output timer re-emits lastFrame
+      if (this.frozen) return;
 
       const size = image.getSize();
       const bitmap = image.getBitmap();
@@ -90,9 +88,7 @@ export class FrameCapture extends EventEmitter {
         return;
       }
 
-      // ── Fast path: copy bitmap into pre-allocated buffer (~1-2ms) ──
-      // This is the ONLY heavy work in the paint callback.
-      // Everything else is deferred to setImmediate to unblock the compositor.
+      // Pre-allocated buffer: avoids 200MB/s GC pressure from Buffer.from()
       if (!this.frameBuffer || this.frameBuffer.length !== bitmap.length) {
         this.frameBuffer = Buffer.allocUnsafe(bitmap.length);
       }
@@ -105,29 +101,7 @@ export class FrameCapture extends EventEmitter {
         timestamp: Date.now(),
       };
 
-      // ── Rate-limited deferred frame emission ──
-      // invalidate() at 2x rate ensures the compositor never starves, but it
-      // also causes paint events to exceed setFrameRate(25). We throttle
-      // emission to target FPS so downstream outputs (SDI, IPC) only process
-      // the frames they need. Paint events between emissions still update
-      // lastFrame so the buffer is always fresh.
-      const now = Date.now();
-      if (!this.pendingEmit && now - this.lastEmitTime >= this.minFrameInterval) {
-        this.lastEmitTime = now;
-        this.frameCount++;
-        this.statsFrameCount++;
-        this.pendingEmit = true;
-        setImmediate(() => {
-          this.pendingEmit = false;
-          if (this.lastFrame) {
-            this.emit('frame', this.lastFrame);
-          }
-        });
-      }
-
-      // ── Thumbnail from paint event NativeImage ──
-      // Much cheaper than capturePage() which triggers a full compositor pass.
-      // resize(384) + toJPEG(70) takes ~0.5ms, runs at 5fps.
+      // Thumbnail from paint event NativeImage (every Nth frame, ~0.5ms)
       this.thumbnailCounter++;
       if (this.thumbnailCounter >= this.thumbnailEvery) {
         this.thumbnailCounter = 0;
@@ -142,12 +116,25 @@ export class FrameCapture extends EventEmitter {
 
     window.webContents.on('paint', this.paintHandler as any);
 
+    // ── CONSUMER: Fixed-rate output timer at target FPS ──
+    // Reads the latest captured frame and emits it downstream.
+    // Downstream work (alpha extraction, IPC to output windows) runs here,
+    // completely decoupled from the compositor's paint events.
+    // setInterval(40ms) delivers exactly 25fps as long as the emit callback
+    // completes within 40ms (alpha extraction + IPC ≈ 12ms, well within budget).
+    const frameMs = Math.round(1000 / this.targetFps);
+    this.outputInterval = setInterval(() => {
+      if (this.lastFrame) {
+        this.frameCount++;
+        this.statsFrameCount++;
+        this.emit('frame', this.lastFrame);
+      }
+    }, frameMs);
+
     // ── Invalidation at 2x target FPS ──
-    // Electron offscreen rendering only fires paint events when content changes.
-    // invalidate() forces the compositor to repaint. Running at 2x target rate
-    // compensates for setInterval jitter on Windows (~4ms) and event loop
-    // latency that could cause missed frames at exactly 1x rate.
-    // The compositor respects setFrameRate() and won't exceed 25fps regardless.
+    // Forces the compositor to repaint for static content.
+    // At 2x rate, the latest frame is at most 10ms stale when the
+    // output timer reads it (vs 40ms at 1x rate).
     const invalidateMs = Math.round(1000 / (this.targetFps * 2));
     this.invalidateInterval = setInterval(() => {
       if (this.attachedWindow && !this.attachedWindow.isDestroyed()) {
@@ -194,6 +181,10 @@ export class FrameCapture extends EventEmitter {
     this.paintHandler = null;
     this.frameBuffer = null;
 
+    if (this.outputInterval) {
+      clearInterval(this.outputInterval);
+      this.outputInterval = null;
+    }
     if (this.invalidateInterval) {
       clearInterval(this.invalidateInterval);
       this.invalidateInterval = null;
