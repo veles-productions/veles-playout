@@ -44,6 +44,8 @@ export class FrameCapture extends EventEmitter {
   private lastFrame: FrameData | null = null;
   private frameBuffer: Buffer | null = null;
   private pendingEmit = false;
+  private lastEmitTime = 0;
+  private minFrameInterval: number;
   private thumbnailCounter = 0;
   private thumbnailEvery: number;
   private statsInterval: ReturnType<typeof setInterval> | null = null;
@@ -55,6 +57,8 @@ export class FrameCapture extends EventEmitter {
     super();
     this.targetFps = targetFps;
     this.thumbnailEvery = Math.max(1, Math.round(targetFps / thumbnailFps));
+    // 90% of frame interval to allow slight jitter while maintaining target rate
+    this.minFrameInterval = Math.floor(900 / targetFps); // 36ms for 25fps
   }
 
   /**
@@ -101,17 +105,17 @@ export class FrameCapture extends EventEmitter {
         timestamp: Date.now(),
       };
 
-      this.frameCount++;
-      this.statsFrameCount++;
-
-      // ── Deferred frame emission ──
-      // Paint events arrive in the Poll phase of Node's event loop.
-      // setImmediate runs in the Check phase (same iteration, after Poll).
-      // This means the compositor thread is unblocked as soon as the paint
-      // callback returns (~2ms), and can start rendering the next frame.
-      // The heavy downstream work (alpha extraction, IPC sends to output
-      // windows) happens in the Check phase without delaying the compositor.
-      if (!this.pendingEmit) {
+      // ── Rate-limited deferred frame emission ──
+      // invalidate() at 2x rate ensures the compositor never starves, but it
+      // also causes paint events to exceed setFrameRate(25). We throttle
+      // emission to target FPS so downstream outputs (SDI, IPC) only process
+      // the frames they need. Paint events between emissions still update
+      // lastFrame so the buffer is always fresh.
+      const now = Date.now();
+      if (!this.pendingEmit && now - this.lastEmitTime >= this.minFrameInterval) {
+        this.lastEmitTime = now;
+        this.frameCount++;
+        this.statsFrameCount++;
         this.pendingEmit = true;
         setImmediate(() => {
           this.pendingEmit = false;
